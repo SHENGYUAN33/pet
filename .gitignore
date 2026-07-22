@@ -20,14 +20,18 @@ build/
 .env.*
 !.env.example
 
-# Media / generated assets (large binary artifacts, keep out of git)
+# Media / generated assets (large binary artifacts + real pet/contact data, keep out of git)
 *.mp4
 *.mov
 *.wav
 *.mp3
-storage/
+storage/profiles/*
+!storage/profiles/.gitkeep
+storage/assets/*
+!storage/assets/.gitkeep
+storage/output/*
+!storage/output/.gitkeep
 tmp/
-output/
 
 # Claude Code local overrides
 .claude/settings.local.json

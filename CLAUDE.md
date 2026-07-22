@@ -61,7 +61,14 @@
 
 素材組成建議比例（避免一開始做「完全生成式影片」）：60% 真實影片剪輯 / 20% 照片動態化 / 10% 字幕與貼圖 / 10% AI 生成場景。
 
-目前所在階段：**PoC 尚未開始（規劃/文件階段）**。開發時請先確認目前實際完成到哪個階段，不要假設後期功能已存在。
+目前所在階段：**PoC 開發中**。已建立 `pipeline/`（profile 載入、腳本生成、旁白合成、FFmpeg 剪輯、CLI）與 `providers/`（Ollama LLM、Coqui XTTS-v2 TTS）的最小可行實作，尚未實際跑通端到端流程（需要本機已 `ollama pull` 模型、安裝 `coqui-tts` 及有真實素材）。開發時請先確認目前實際完成到哪個階段，不要假設後期功能已存在。
+
+### PoC 實作邊界（開源優先，對應規劃時的技術選型決策）
+- LLM：Ollama + Qwen2.5-7B-Instruct（`pipeline/config.py` 可透過 `.env` 覆寫模型/host）
+- TTS：Coqui XTTS-v2（zero-shot voice cloning，需一段參考語音 wav）
+- VLM／影片生成 I2V／音樂生成：**PoC 階段刻意省略**，素材品質檢查靠人工選片，影片以真實素材剪輯＋照片 Ken Burns 動態為主（見 docs/architecture.md §5 策略 A）
+- 任務編排／資料庫：PoC 用同步流程＋本機資料夾，不上 Celery/Temporal/PostgreSQL，MVP 階段才依規模導入
+- Provider Adapter 目前只有單一實作（`providers/llm/ollama_provider.py`、`providers/tts/xtts_provider.py`），Router／多 provider 切換留到 MVP
 
 ## 建議技術棧（規劃中，實作時以實際程式碼為準）
 - 任務編排：Temporal 或 Celery
@@ -81,4 +88,28 @@
 - 尚未有測試/建置指令可執行；一旦專案初始化出 package.json / pyproject.toml，回頭更新本文件的「常用指令」章節
 
 ## 常用指令
-（尚未建置，待專案骨架建立後補上 lint / test / build / dev 指令）
+
+```bash
+# 環境設定
+python -m venv .venv && source .venv/Scripts/activate   # Windows Git Bash
+pip install -e ".[dev]"
+cp .env.example .env   # 依需要調整 OLLAMA_MODEL / XTTS_MODEL_NAME
+
+# 確認 Ollama 模型已就緒（需先安裝並啟動 Ollama）
+ollama pull qwen2.5:7b-instruct
+ollama list
+
+# 測試
+pytest
+ruff check .
+
+# 執行 PoC pipeline（需準備好 Pet Profile JSON、真實素材、參考語音 wav）
+python -m pipeline.run \
+  --profile storage/profiles/<pet_id>.json \
+  --voice-sample storage/assets/<pet_id>/voice_ref.wav \
+  --style cute \
+  --duration 30
+# 或在 Claude Code 內用 /gen-video 自訂 slash command
+```
+
+素材放置慣例：`storage/profiles/<pet_id>.json`（Profile）、`storage/assets/<pet_id>/`（原始照片/影片/語音樣本，對應 Profile 的 `media.assets[].url` 檔名）、`storage/output/<pet_id>/`（生成結果，含三種風格腳本 JSON、各鏡頭 clip、最終影片）。這三個資料夾內容都被 `.gitignore` 排除，不會進版控。
