@@ -1,0 +1,86 @@
+{
+  "pet_id": "PET-2026-001",
+  "title": "豆豆正在等一個家",
+  "style": "warm_cute",
+  "target_audience": "喜歡戶外活動的單身或小家庭",
+  "duration": 30,
+  "language": "zh-TW",
+  "scenes": [
+    {
+      "scene_id": 1,
+      "start": 0,
+      "end": 3,
+      "purpose": "hook",
+      "shot_type": "cute_highlight",
+      "visual_source": "uploaded_video_03",
+      "visual_instruction": "選取豆豆歪頭看鏡頭的片段",
+      "narration": "嗨，先別滑走，我等你好久了！",
+      "subtitle": "先別滑走！我在等你",
+      "music_mood": "playful"
+    },
+    {
+      "scene_id": 2,
+      "start": 3,
+      "end": 8,
+      "purpose": "intro",
+      "shot_type": "standard",
+      "visual_source": "uploaded_photo_01",
+      "visual_instruction": "正面照，輕微搖尾動態化",
+      "narration": "我是豆豆，今年兩歲，是個超愛撒嬌的小男生。",
+      "subtitle": "我是豆豆，兩歲，超愛撒嬌",
+      "music_mood": "playful"
+    },
+    {
+      "scene_id": 3,
+      "start": 8,
+      "end": 14,
+      "purpose": "personality_highlight",
+      "shot_type": "cute_highlight",
+      "visual_source": "uploaded_video_05",
+      "visual_instruction": "玩球片段",
+      "narration": "我最喜歡陪人玩球，也會安靜坐在你旁邊。",
+      "subtitle": "最愛玩球，也很安靜乖巧",
+      "music_mood": "warm"
+    },
+    {
+      "scene_id": 4,
+      "start": 14,
+      "end": 20,
+      "purpose": "life_imagination",
+      "shot_type": "generated_fantasy",
+      "visual_source": "generated",
+      "visual_instruction": "居家窗邊場景，AI 生成需標示提示",
+      "narration": "下班回家時，我會第一個跑來迎接你。",
+      "subtitle": "我會第一個跑來迎接你",
+      "music_mood": "warm",
+      "ai_generated_disclosure": true
+    },
+    {
+      "scene_id": 5,
+      "start": 20,
+      "end": 25,
+      "purpose": "adoption_requirements",
+      "shot_type": "info_card",
+      "visual_source": "uploaded_photo_02",
+      "visual_instruction": "真實照片搭配健康資訊卡疊加",
+      "narration": "我已經完成健康檢查，也會乖乖使用尿墊。",
+      "subtitle": "已完成健康檢查｜已結紮",
+      "music_mood": "calm",
+      "required_disclosure": "不建議與小型動物共居"
+    },
+    {
+      "scene_id": 6,
+      "start": 25,
+      "end": 30,
+      "purpose": "cta",
+      "shot_type": "standard",
+      "visual_source": "uploaded_video_01",
+      "visual_instruction": "注視鏡頭特寫，疊加名字與聯絡資訊",
+      "narration": "可以給我一個家嗎？點擊了解我的故事。",
+      "subtitle": "點擊了解豆豆的故事",
+      "music_mood": "emotional_cta"
+    }
+  ],
+  "cta": "點擊查看豆豆的領養資訊",
+  "cta_url": "https://example.org/adopt/PET-2026-001"
+}

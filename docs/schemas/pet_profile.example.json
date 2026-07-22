@@ -1,0 +1,53 @@
+{
+  "pet_id": "PET-2026-001",
+  "name": "豆豆",
+  "species": "dog",
+  "breed": "米克斯",
+  "sex": "male",
+  "age": "2歲",
+  "size": "medium",
+  "location": "新竹",
+  "health_status": {
+    "vaccinated": true,
+    "neutered": true,
+    "microchipped": true
+  },
+  "personality_tags": {
+    "appeal": ["親人", "活潑", "撒嬌"],
+    "lifestyle_fit": ["公寓可養", "適合單身或小家庭"],
+    "care_needs": ["需每日散步", "運動量中等"],
+    "restrictions": ["不親貓", "不建議與小型動物共居"]
+  },
+  "story": "曾在工業區被救援",
+  "adoption_requirements": ["需每日散步", "不建議與小型動物共居"],
+  "contact_url": "https://example.org/adopt/PET-2026-001",
+  "media": {
+    "assets": [
+      {
+        "asset_id": "IMG-001",
+        "type": "photo",
+        "url": "s3://pet-assets/PET-2026-001/img-001.jpg",
+        "captured_at": "2026-06-01",
+        "usage_license_status": "granted",
+        "ai_extension_allowed": true
+      },
+      {
+        "asset_id": "VID-001",
+        "type": "video",
+        "url": "s3://pet-assets/PET-2026-001/vid-001.mp4",
+        "captured_at": "2026-06-03",
+        "usage_license_status": "granted",
+        "ai_extension_allowed": true
+      }
+    ]
+  },
+  "identity_card": {
+    "coat_color": "棕白雙色",
+    "pattern": "身體白色、頭部棕色斑塊",
+    "ear_type": "垂耳",
+    "eye_color": "深棕色",
+    "body_type": "中型、精瘦",
+    "accessories": "藍色項圈",
+    "distinguishing_marks": "左後腳白色襪子紋"
+  }
+}
