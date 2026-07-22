@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "permissions": {
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git branch*)",
+      "Bash(git show*)",
+      "Bash(git remote*)",
+      "Bash(python --version)",
+      "Bash(python3 --version)",
+      "Bash(python -m venv*)",
+      "Bash(pip list*)",
+      "Bash(pip show*)",
+      "Bash(pip install -r requirements*.txt)",
+      "Bash(pytest*)",
+      "Bash(ruff *)",
+      "Bash(black --check*)",
+      "Bash(mypy*)",
+      "Bash(node --version)",
+      "Bash(npm --version)",
+      "Bash(npm run*)",
+      "Bash(npm install)",
+      "Bash(npm ci)",
+      "Bash(npx --version)",
+      "Bash(pnpm --version)",
+      "Bash(pnpm run*)",
+      "Bash(pnpm install)",
+      "Bash(ffmpeg -version)",
+      "Bash(ffprobe -version)",
+      "Bash(ls*)",
+      "Bash(dir*)",
+      "Bash(pwd)",
+      "Bash(docker --version)",
+      "Bash(docker compose config)",
+      "Bash(docker ps*)"
+    ],
+    "ask": [
+      "Bash(git push*)",
+      "Bash(git reset*)",
+      "Bash(git checkout*)",
+      "Bash(git clean*)",
+      "Bash(rm *)",
+      "Bash(docker compose up*)",
+      "Bash(docker compose down*)",
+      "Bash(pip install *)",
+      "Bash(npm install *)"
+    ],
+    "deny": [
+      "Bash(git push --force*)",
+      "Bash(rm -rf /*)"
+    ]
+  }
+}

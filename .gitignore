@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+build/
+.next/
+.turbo/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Media / generated assets (large binary artifacts, keep out of git)
+*.mp4
+*.mov
+*.wav
+*.mp3
+storage/
+tmp/
+output/
+
+# Claude Code local overrides
+.claude/settings.local.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
