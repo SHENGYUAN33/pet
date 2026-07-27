@@ -12,6 +12,7 @@ from pipeline.editing import (
     concat_video_only,
     mux_video_audio,
 )
+from pipeline.fact_check import find_missing_disclosures
 from pipeline.narration import silence_scenes, synthesize_scenes
 from pipeline.profile import PetProfile
 from pipeline.script_gen import SCRIPT_STYLES, generate_all_styles
@@ -59,6 +60,13 @@ def generate_video(
     scripts_dir = work_dir / "scripts"
     scripts_dir.mkdir(parents=True, exist_ok=True)
     for name, s in scripts.items():
+        missing = find_missing_disclosures(s, profile)
+        s["_disclosure_check"] = {"missing_restrictions": missing}
+        if missing:
+            print(
+                f"[WARNING] style={name!r} may be missing required disclosure(s): {missing} "
+                "— review before this script is approved for publish."
+            )
         (scripts_dir / f"{name}.json").write_text(
             json.dumps(s, ensure_ascii=False, indent=2), encoding="utf-8"
         )
