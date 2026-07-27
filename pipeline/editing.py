@@ -32,12 +32,13 @@ def build_scene_clip(
     visual_path: str,
     duration: float,
     subtitle_text: str,
-    narration_path: str,
     output_path: str,
 ) -> str:
-    """Render one scene: real video or photo (Ken Burns zoom), burned
-    subtitle, narration audio track. Real-footage-first per
-    docs/architecture.md §5 strategy A — no AI video generation in PoC."""
+    """Render one scene's video (no audio): real video or photo (Ken Burns
+    zoom) with burned subtitle. Real-footage-first per
+    docs/architecture.md §5 strategy A — no AI video generation in PoC.
+    Audio (narration + music) is assembled separately and muxed in at the
+    end — see concat_video_only / mux_video_audio and pipeline/audio_mix.py."""
     is_photo = Path(visual_path).suffix.lower() in PHOTO_EXTENSIONS
 
     if is_photo:
@@ -64,29 +65,53 @@ def build_scene_clip(
     cmd = [
         "ffmpeg", "-y",
         *video_input,
-        "-i", narration_path,
         "-t", str(duration),
         "-vf", f"{video_filter}{drawtext}",
-        "-map", "0:v", "-map", "1:a",
+        "-an",
         "-c:v", "libx264", "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        "-shortest",
         output_path,
     ]
     subprocess.run(cmd, check=True)
     return output_path
 
 
-def concat_clips(clip_paths: list[str], output_path: str) -> str:
-    list_file = Path(output_path).with_suffix(".txt")
+def _concat_via_demuxer(paths: list[str], output_path: str, *, extra_args: list[str]) -> str:
+    list_file = Path(output_path).with_suffix(".concat.txt")
     with open(list_file, "w", encoding="utf-8") as f:
-        for p in clip_paths:
+        for p in paths:
             f.write(f"file '{Path(p).resolve().as_posix()}'\n")
 
     cmd = [
         "ffmpeg", "-y",
         "-f", "concat", "-safe", "0", "-i", str(list_file),
-        "-c", "copy",
+        *extra_args,
+        output_path,
+    ]
+    subprocess.run(cmd, check=True)
+    return output_path
+
+
+def concat_video_only(clip_paths: list[str], output_path: str) -> str:
+    """Concatenate the (audio-less) per-scene video clips into one track."""
+    return _concat_via_demuxer(clip_paths, output_path, extra_args=["-c:v", "copy"])
+
+
+def concat_audio(audio_paths: list[str], output_path: str) -> str:
+    """Concatenate per-scene narration/silence wavs into one continuous
+    narration track, in scene order."""
+    return _concat_via_demuxer(audio_paths, output_path, extra_args=["-c:a", "copy"])
+
+
+def mux_video_audio(video_path: str, audio_path: str, output_path: str) -> str:
+    """Combine the concatenated video track with the final mixed audio
+    track (narration + music, see pipeline/audio_mix.py) into the deliverable MP4."""
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", video_path,
+        "-i", audio_path,
+        "-map", "0:v", "-map", "1:a",
+        "-c:v", "copy", "-c:a", "aac",
+        "-shortest",
         output_path,
     ]
     subprocess.run(cmd, check=True)

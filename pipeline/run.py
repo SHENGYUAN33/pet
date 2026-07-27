@@ -5,7 +5,13 @@ import json
 from pathlib import Path
 
 from pipeline import config
-from pipeline.editing import build_scene_clip, concat_clips
+from pipeline.audio_mix import mix_narration_with_music
+from pipeline.editing import (
+    build_scene_clip,
+    concat_audio,
+    concat_video_only,
+    mux_video_audio,
+)
 from pipeline.narration import silence_scenes, synthesize_scenes
 from pipeline.profile import PetProfile
 from pipeline.script_gen import SCRIPT_STYLES, generate_all_styles
@@ -36,12 +42,14 @@ def generate_video(
     *,
     profile_path: str,
     voice_sample: str | None = None,
+    music_track: str | None = None,
     style: str = "cute",
     duration: int = 30,
 ) -> Path:
     """voice_sample=None runs without narration (silent placeholder audio
     per scene) — useful for testing script generation and video assembly
-    before a TTS voice reference is available."""
+    before a TTS voice reference is available. music_track=None skips
+    background music (narration/silence only)."""
     profile = PetProfile.load(profile_path)
 
     llm = OllamaLLMProvider()
@@ -65,7 +73,8 @@ def generate_video(
     else:
         audio_paths = silence_scenes(script, work_dir / "audio")
 
-    clip_paths = []
+    video_clip_paths = []
+    ordered_audio_paths = []
     for scene in script["scenes"]:
         visual_path = _resolve_visual_path(profile, scene["visual_source"])
         clip_path = work_dir / f"scene_{scene['scene_id']}.mp4"
@@ -73,13 +82,32 @@ def generate_video(
             visual_path=str(visual_path),
             duration=scene["end"] - scene["start"],
             subtitle_text=scene["subtitle"],
-            narration_path=audio_paths[scene["scene_id"]],
             output_path=str(clip_path),
         )
-        clip_paths.append(str(clip_path))
+        video_clip_paths.append(str(clip_path))
+        ordered_audio_paths.append(audio_paths[scene["scene_id"]])
+
+    total_duration = script["scenes"][-1]["end"]
+
+    concatenated_video = concat_video_only(
+        video_clip_paths, str(work_dir / "video_only.mp4")
+    )
+    concatenated_narration = concat_audio(
+        ordered_audio_paths, str(work_dir / "narration_full.wav")
+    )
+
+    if music_track:
+        final_audio = mix_narration_with_music(
+            narration_path=concatenated_narration,
+            music_path=music_track,
+            duration=total_duration,
+            output_path=str(work_dir / "audio_mixed.wav"),
+        )
+    else:
+        final_audio = concatenated_narration
 
     final_path = work_dir / f"{profile.pet_id}_{style}_{duration}s.mp4"
-    concat_clips(clip_paths, str(final_path))
+    mux_video_audio(concatenated_video, final_audio, str(final_path))
     return final_path
 
 
@@ -93,6 +121,11 @@ def main():
         default=None,
         help="Reference wav for TTS voice cloning; omit to skip narration (silent placeholder audio)",
     )
+    parser.add_argument(
+        "--music-track",
+        default=None,
+        help="Background music file; omit to skip music (narration/silence only)",
+    )
     parser.add_argument("--style", default="cute", choices=SCRIPT_STYLES)
     parser.add_argument("--duration", type=int, default=30)
     args = parser.parse_args()
@@ -100,6 +133,7 @@ def main():
     output_path = generate_video(
         profile_path=args.profile,
         voice_sample=args.voice_sample,
+        music_track=args.music_track,
         style=args.style,
         duration=args.duration,
     )
