@@ -18,7 +18,5 @@ class LLMProvider(ABC):
 
 class TTSProvider(ABC):
     @abstractmethod
-    def synthesize(
-        self, text: str, *, voice_profile: str, language: str, output_path: str
-    ) -> str:
+    def synthesize(self, text: str, *, voice_profile: str, language: str, output_path: str) -> str:
         """Synthesize narration audio to output_path, return the path."""

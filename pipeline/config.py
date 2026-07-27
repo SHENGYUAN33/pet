@@ -16,9 +16,7 @@ OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b-instruct")
 
 # TTS (narration) — open-source, self-hosted via Coqui XTTS-v2
-XTTS_MODEL_NAME = os.getenv(
-    "XTTS_MODEL_NAME", "tts_models/multilingual/multi-dataset/xtts_v2"
-)
+XTTS_MODEL_NAME = os.getenv("XTTS_MODEL_NAME", "tts_models/multilingual/multi-dataset/xtts_v2")
 TTS_LANGUAGE = os.getenv("TTS_LANGUAGE", "zh-cn")  # XTTS language code for Chinese
 
 # Subtitle burn-in font (FFmpeg drawtext). Explicit fontfile avoids relying on

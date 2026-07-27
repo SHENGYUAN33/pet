@@ -2,7 +2,9 @@ from pathlib import Path
 
 from pipeline.profile import PetProfile
 
-EXAMPLE_PROFILE = Path(__file__).resolve().parent.parent / "docs" / "schemas" / "pet_profile.example.json"
+EXAMPLE_PROFILE = (
+    Path(__file__).resolve().parent.parent / "docs" / "schemas" / "pet_profile.example.json"
+)
 
 
 def test_loads_example_profile():

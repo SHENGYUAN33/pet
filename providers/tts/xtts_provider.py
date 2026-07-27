@@ -18,9 +18,7 @@ class XTTSProvider(TTSProvider):
             self._tts = TTS(self.model_name)
         return self._tts
 
-    def synthesize(
-        self, text: str, *, voice_profile: str, language: str, output_path: str
-    ) -> str:
+    def synthesize(self, text: str, *, voice_profile: str, language: str, output_path: str) -> str:
         tts = self._load()
         tts.tts_to_file(
             text=text,

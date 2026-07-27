@@ -89,12 +89,8 @@ def generate_video(
 
     total_duration = script["scenes"][-1]["end"]
 
-    concatenated_video = concat_video_only(
-        video_clip_paths, str(work_dir / "video_only.mp4")
-    )
-    concatenated_narration = concat_audio(
-        ordered_audio_paths, str(work_dir / "narration_full.wav")
-    )
+    concatenated_video = concat_video_only(video_clip_paths, str(work_dir / "video_only.mp4"))
+    concatenated_narration = concat_audio(ordered_audio_paths, str(work_dir / "narration_full.wav"))
 
     if music_track:
         final_audio = mix_narration_with_music(

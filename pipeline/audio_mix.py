@@ -25,12 +25,18 @@ def mix_narration_with_music(
         "[0:a][ducked]amix=inputs=2:duration=first:weights=1 1,loudnorm[aout]"
     )
     cmd = [
-        "ffmpeg", "-y",
-        "-i", narration_path,
-        "-i", music_path,
-        "-filter_complex", filter_complex,
-        "-map", "[aout]",
-        "-t", str(duration),
+        "ffmpeg",
+        "-y",
+        "-i",
+        narration_path,
+        "-i",
+        music_path,
+        "-filter_complex",
+        filter_complex,
+        "-map",
+        "[aout]",
+        "-t",
+        str(duration),
         output_path,
     ]
     subprocess.run(cmd, check=True)

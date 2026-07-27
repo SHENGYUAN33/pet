@@ -63,7 +63,7 @@ class PetProfile(BaseModel):
     identity_card: IdentityCard
 
     @classmethod
-    def load(cls, path: str | Path) -> "PetProfile":
+    def load(cls, path: str | Path) -> PetProfile:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
         return cls.model_validate(data)

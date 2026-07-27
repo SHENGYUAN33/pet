@@ -19,11 +19,7 @@ FRAME_RATE = 25
 
 
 def _escape_drawtext(text: str) -> str:
-    return (
-        text.replace("\\", "\\\\")
-        .replace(":", "\\:")
-        .replace("'", "\\'")
-    )
+    return text.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
 
 
 def _escape_filter_path(path: str) -> str:
@@ -72,13 +68,22 @@ def build_scene_clip(
     )
 
     cmd = [
-        "ffmpeg", "-y",
+        "ffmpeg",
+        "-y",
         *video_input,
-        "-t", str(duration),
-        "-vf", f"{video_filter}{drawtext}",
+        "-t",
+        str(duration),
+        "-vf",
+        f"{video_filter}{drawtext}",
         "-an",
-        "-r", str(FRAME_RATE), "-fps_mode", "cfr",
-        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-r",
+        str(FRAME_RATE),
+        "-fps_mode",
+        "cfr",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
         output_path,
     ]
     subprocess.run(cmd, check=True)
@@ -88,12 +93,17 @@ def build_scene_clip(
 def _concat_via_demuxer(paths: list[str], output_path: str, *, extra_args: list[str]) -> str:
     list_file = Path(output_path).with_suffix(".concat.txt")
     with open(list_file, "w", encoding="utf-8") as f:
-        for p in paths:
-            f.write(f"file '{Path(p).resolve().as_posix()}'\n")
+        f.writelines(f"file '{Path(p).resolve().as_posix()}'\n" for p in paths)
 
     cmd = [
-        "ffmpeg", "-y",
-        "-f", "concat", "-safe", "0", "-i", str(list_file),
+        "ffmpeg",
+        "-y",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        str(list_file),
         *extra_args,
         output_path,
     ]
@@ -116,11 +126,20 @@ def mux_video_audio(video_path: str, audio_path: str, output_path: str) -> str:
     """Combine the concatenated video track with the final mixed audio
     track (narration + music, see pipeline/audio_mix.py) into the deliverable MP4."""
     cmd = [
-        "ffmpeg", "-y",
-        "-i", video_path,
-        "-i", audio_path,
-        "-map", "0:v", "-map", "1:a",
-        "-c:v", "copy", "-c:a", "aac",
+        "ffmpeg",
+        "-y",
+        "-i",
+        video_path,
+        "-i",
+        audio_path,
+        "-map",
+        "0:v",
+        "-map",
+        "1:a",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
         "-shortest",
         output_path,
     ]

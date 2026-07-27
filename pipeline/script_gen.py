@@ -53,10 +53,12 @@ _PROMPT_TEMPLATE = """\
 
 
 def _build_prompt(profile: PetProfile, *, style: str, duration: int) -> str:
-    asset_list = "\n".join(
-        f"- {a.asset_id} ({a.type}): {a.url.rsplit('/', 1)[-1]}"
-        for a in profile.media.assets
-    ) or "(無可用素材，請只使用 visual_source: \"generated\" 並標示為 AI 生成)"
+    asset_list = (
+        "\n".join(
+            f"- {a.asset_id} ({a.type}): {a.url.rsplit('/', 1)[-1]}" for a in profile.media.assets
+        )
+        or '(無可用素材，請只使用 visual_source: "generated" 並標示為 AI 生成)'
+    )
 
     restrictions = "、".join(profile.personality_tags.restrictions) or "（無）"
 

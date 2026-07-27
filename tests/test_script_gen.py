@@ -1,12 +1,14 @@
 import json
 
 from pipeline.profile import PetProfile
-from pipeline.script_gen import SCRIPT_STYLES, generate_script
+from pipeline.script_gen import SCRIPT_STYLES, _build_prompt, generate_script
 from providers.base import LLMProvider
 
 EXAMPLE_PROFILE = (
     __import__("pathlib").Path(__file__).resolve().parent.parent
-    / "docs" / "schemas" / "pet_profile.example.json"
+    / "docs"
+    / "schemas"
+    / "pet_profile.example.json"
 )
 
 
@@ -69,3 +71,30 @@ def test_generate_script_parses_llm_json():
 
 def test_script_styles_constant():
     assert SCRIPT_STYLES == ["cute", "warm_story", "contrast_humor"]
+
+
+def test_prompt_includes_required_disclosure_restrictions():
+    """docs/architecture.md §4: 必要照護限制不得因廣告目的而被隱藏. The LLM can
+    only honor that if the prompt actually states the restrictions and marks
+    them as mandatory — this only checks the prompt we send, not whether a
+    live model actually complies (that needs a real-LLM run, see the manual
+    verification noted in CLAUDE.md)."""
+    profile = PetProfile.load(EXAMPLE_PROFILE)
+    assert profile.personality_tags.restrictions, (
+        "fixture profile must have restrictions to test this"
+    )
+
+    prompt = _build_prompt(profile, style="cute", duration=30)
+
+    for restriction in profile.personality_tags.restrictions:
+        assert restriction in prompt
+    assert "必要揭露（不可省略）" in prompt
+
+
+def test_prompt_shows_placeholder_when_profile_has_no_restrictions():
+    profile = PetProfile.load(EXAMPLE_PROFILE)
+    profile.personality_tags.restrictions = []
+
+    prompt = _build_prompt(profile, style="cute", duration=30)
+
+    assert "必要揭露（不可省略）：\n（無）" in prompt

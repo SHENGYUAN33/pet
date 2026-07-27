@@ -35,9 +35,14 @@ def silence_scenes(script: dict, output_dir: Path) -> dict[int, str]:
         duration = scene["end"] - scene["start"]
         subprocess.run(
             [
-                "ffmpeg", "-y",
-                "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
-                "-t", str(duration),
+                "ffmpeg",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=r=24000:cl=mono",
+                "-t",
+                str(duration),
                 str(out_path),
             ],
             check=True,
