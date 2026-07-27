@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 
+from pipeline import config
 from pipeline.profile import PetProfile
 from providers.base import LLMProvider
 
@@ -34,12 +35,15 @@ _PROMPT_TEMPLATE = """\
 }}
 
 嚴格規則：
-1. scenes 陣列切分整支影片時長，時間軸須從 0 開始、連續不重疊、加總等於 {duration}
-2. visual_source 必須從下方「可用素材清單」中選擇實際檔名，不可捏造不存在的素材
-3. 不可捏造下方資料以外的健康狀況、技能或救援故事
-4. 必要照護限制（見下方「必要揭露」）必須至少出現在一個 scene 的 narration 或 subtitle 中
-5. 每句 narration 不超過 22 個中文字
-6. 開場（第一個 scene）必須是 hook，出現寵物動作與吸睛句
+1. scenes 陣列必須剛好是 {min_scenes} 到 {max_scenes} 個鏡頭，不可多也不可少
+2. 每個鏡頭長度須介於 {min_scene_duration} 到 {max_scene_duration} 秒之間（最後一個鏡頭可稍短以對齊總長度）
+3. 時間軸須從 0 開始：下一個鏡頭的 start 必須「剛好等於」上一個鏡頭的 end，不可有間隙也不可重疊，全部加總必須等於 {duration}
+4. visual_source 必須從下方「可用素材清單」中選擇實際檔名，不可捏造不存在的素材
+5. 不可捏造下方資料以外的健康狀況、技能或救援故事
+6. 必要照護限制（見下方「必要揭露」）必須至少出現在一個 scene 的 narration 或 subtitle 中
+7. 每句 narration 不超過 22 個中文字
+8. **每個鏡頭的 subtitle 都不可以是空字串**，靜音觀看也要能看懂內容
+9. 開場（第一個 scene）必須是 hook，出現寵物動作與吸睛句
 
 可用素材清單：
 {asset_list}
@@ -71,6 +75,10 @@ def _build_prompt(profile: PetProfile, *, style: str, duration: int) -> str:
         asset_list=asset_list,
         restrictions=restrictions,
         profile_json=profile.model_dump_json(indent=2),
+        min_scenes=config.MIN_SCENES,
+        max_scenes=config.MAX_SCENES,
+        min_scene_duration=config.MIN_SCENE_DURATION,
+        max_scene_duration=config.MAX_SCENE_DURATION,
     )
 
 

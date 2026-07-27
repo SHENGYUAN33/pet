@@ -15,6 +15,7 @@ from pipeline.editing import (
 from pipeline.fact_check import find_missing_disclosures
 from pipeline.narration import silence_scenes, synthesize_scenes
 from pipeline.profile import PetProfile
+from pipeline.qa import validate_script_structure
 from pipeline.script_gen import SCRIPT_STYLES, generate_all_styles
 from providers.llm.ollama_provider import OllamaLLMProvider
 from providers.tts.xtts_provider import XTTSProvider
@@ -67,6 +68,12 @@ def generate_video(
                 f"[WARNING] style={name!r} may be missing required disclosure(s): {missing} "
                 "— review before this script is approved for publish."
             )
+
+        structure_issues = validate_script_structure(s)
+        s["_structure_check"] = {"issues": structure_issues}
+        if structure_issues:
+            print(f"[WARNING] style={name!r} has structural issues: {structure_issues}")
+
         (scripts_dir / f"{name}.json").write_text(
             json.dumps(s, ensure_ascii=False, indent=2), encoding="utf-8"
         )
@@ -95,7 +102,10 @@ def generate_video(
         video_clip_paths.append(str(clip_path))
         ordered_audio_paths.append(audio_paths[scene["scene_id"]])
 
-    total_duration = script["scenes"][-1]["end"]
+    # Sum actual per-scene clip durations rather than trusting scenes[-1]["end"]:
+    # if the LLM's timeline has gaps/overlaps (see pipeline/qa.py), the
+    # concatenated video's real length matches this sum, not the declared end time.
+    total_duration = sum(scene["end"] - scene["start"] for scene in script["scenes"])
 
     concatenated_video = concat_video_only(video_clip_paths, str(work_dir / "video_only.mp4"))
     concatenated_narration = concat_audio(ordered_audio_paths, str(work_dir / "narration_full.wav"))

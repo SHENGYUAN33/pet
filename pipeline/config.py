@@ -23,3 +23,12 @@ TTS_LANGUAGE = os.getenv("TTS_LANGUAGE", "zh-cn")  # XTTS language code for Chin
 # fontconfig, which is frequently unconfigured on Windows and crashes drawtext
 # rather than failing gracefully. Default is Traditional Chinese (JhengHei).
 DRAWTEXT_FONT_FILE = os.getenv("DRAWTEXT_FONT_FILE", r"C:\Windows\Fonts\msjh.ttc")
+
+# Shot-level generation targets (docs/architecture.md §2): each video is 5-7
+# shots of 3-6s each, not a single continuous take. Centralized here per
+# CLAUDE.md's "不寫死 magic number" rule instead of scattered across
+# script_gen.py's prompt and pipeline/qa.py's structural validator.
+MIN_SCENES = int(os.getenv("MIN_SCENES", "5"))
+MAX_SCENES = int(os.getenv("MAX_SCENES", "7"))
+MIN_SCENE_DURATION = int(os.getenv("MIN_SCENE_DURATION", "3"))
+MAX_SCENE_DURATION = int(os.getenv("MAX_SCENE_DURATION", "6"))
