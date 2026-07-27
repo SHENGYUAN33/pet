@@ -11,6 +11,12 @@ PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 FRAME_WIDTH = 1080
 FRAME_HEIGHT = 1920
 
+# All scene clips must share this exact constant frame rate: concat_video_only
+# stream-copies clips together, and mismatched fps/timebase between a photo
+# (Ken Burns, generated at a fixed fps) and a real video clip (native fps)
+# corrupts the concatenated timestamps, silently truncating the final duration.
+FRAME_RATE = 25
+
 
 def _escape_drawtext(text: str) -> str:
     return (
@@ -42,18 +48,21 @@ def build_scene_clip(
     is_photo = Path(visual_path).suffix.lower() in PHOTO_EXTENSIONS
 
     if is_photo:
-        frames = max(int(duration * 25), 1)
+        frames = max(int(duration * FRAME_RATE), 1)
         video_filter = (
             f"scale={FRAME_WIDTH * 2}:-1,"
-            f"zoompan=z='min(zoom+0.0015,1.2)':d={frames}:s={FRAME_WIDTH}x{FRAME_HEIGHT}:fps=25,"
+            f"zoompan=z='min(zoom+0.0015,1.2)':d={frames}:s={FRAME_WIDTH}x{FRAME_HEIGHT}:fps={FRAME_RATE},"
         )
         video_input = ["-loop", "1", "-i", visual_path]
     else:
         video_filter = (
             f"scale={FRAME_WIDTH}:{FRAME_HEIGHT}:force_original_aspect_ratio=increase,"
             f"crop={FRAME_WIDTH}:{FRAME_HEIGHT},"
+            f"fps={FRAME_RATE},"
         )
-        video_input = ["-i", visual_path]
+        # Real clips are often shorter than the scene's assigned duration;
+        # loop so -t below can always fill the full scene length.
+        video_input = ["-stream_loop", "-1", "-i", visual_path]
 
     drawtext = (
         f"drawtext=fontfile='{_escape_filter_path(config.DRAWTEXT_FONT_FILE)}':"
@@ -68,6 +77,7 @@ def build_scene_clip(
         "-t", str(duration),
         "-vf", f"{video_filter}{drawtext}",
         "-an",
+        "-r", str(FRAME_RATE), "-fps_mode", "cfr",
         "-c:v", "libx264", "-pix_fmt", "yuv420p",
         output_path,
     ]
