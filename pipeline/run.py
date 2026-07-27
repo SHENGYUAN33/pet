@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pipeline import config
 from pipeline.editing import build_scene_clip, concat_clips
-from pipeline.narration import synthesize_scenes
+from pipeline.narration import silence_scenes, synthesize_scenes
 from pipeline.profile import PetProfile
 from pipeline.script_gen import SCRIPT_STYLES, generate_all_styles
 from providers.llm.ollama_provider import OllamaLLMProvider
@@ -35,10 +35,13 @@ def _resolve_visual_path(profile: PetProfile, visual_source: str) -> Path:
 def generate_video(
     *,
     profile_path: str,
-    voice_sample: str,
+    voice_sample: str | None = None,
     style: str = "cute",
     duration: int = 30,
 ) -> Path:
+    """voice_sample=None runs without narration (silent placeholder audio
+    per scene) — useful for testing script generation and video assembly
+    before a TTS voice reference is available."""
     profile = PetProfile.load(profile_path)
 
     llm = OllamaLLMProvider()
@@ -54,10 +57,13 @@ def generate_video(
 
     script = scripts[style]
 
-    tts = XTTSProvider()
-    audio_paths = synthesize_scenes(
-        script, tts, voice_profile=voice_sample, output_dir=work_dir / "audio"
-    )
+    if voice_sample:
+        tts = XTTSProvider()
+        audio_paths = synthesize_scenes(
+            script, tts, voice_profile=voice_sample, output_dir=work_dir / "audio"
+        )
+    else:
+        audio_paths = silence_scenes(script, work_dir / "audio")
 
     clip_paths = []
     for scene in script["scenes"]:
@@ -82,7 +88,11 @@ def main():
         description="PoC pipeline: generate a pet adoption video from a Pet Profile JSON"
     )
     parser.add_argument("--profile", required=True, help="Path to pet profile JSON")
-    parser.add_argument("--voice-sample", required=True, help="Reference wav for TTS voice cloning")
+    parser.add_argument(
+        "--voice-sample",
+        default=None,
+        help="Reference wav for TTS voice cloning; omit to skip narration (silent placeholder audio)",
+    )
     parser.add_argument("--style", default="cute", choices=SCRIPT_STYLES)
     parser.add_argument("--duration", type=int, default=30)
     args = parser.parse_args()

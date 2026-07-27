@@ -73,12 +73,13 @@ def _build_prompt(profile: PetProfile, *, style: str, duration: int) -> str:
 
 
 def _extract_json(raw: str) -> dict:
-    """Ollama models sometimes wrap JSON in prose or code fences; pull out
-    the first {...} block before parsing."""
+    """Ollama models sometimes wrap JSON in prose or code fences, or emit
+    literal newlines inside string values; pull out the first {...} block
+    and parse leniently (strict=False allows unescaped control characters)."""
     match = re.search(r"\{.*\}", raw, re.DOTALL)
     if not match:
         raise ValueError(f"LLM response did not contain a JSON object: {raw!r}")
-    return json.loads(match.group(0))
+    return json.loads(match.group(0), strict=False)
 
 
 def generate_script(

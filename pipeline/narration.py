@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from pipeline import config
@@ -19,6 +20,27 @@ def synthesize_scenes(
             voice_profile=voice_profile,
             language=config.TTS_LANGUAGE,
             output_path=str(out_path),
+        )
+        audio_paths[scene["scene_id"]] = str(out_path)
+    return audio_paths
+
+
+def silence_scenes(script: dict, output_dir: Path) -> dict[int, str]:
+    """Placeholder silent audio per scene, for testing the visual/editing
+    pipeline before a voice reference sample is available (no narration)."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    audio_paths: dict[int, str] = {}
+    for scene in script["scenes"]:
+        out_path = output_dir / f"scene_{scene['scene_id']}.wav"
+        duration = scene["end"] - scene["start"]
+        subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
+                "-t", str(duration),
+                str(out_path),
+            ],
+            check=True,
         )
         audio_paths[scene["scene_id"]] = str(out_path)
     return audio_paths

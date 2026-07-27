@@ -20,3 +20,8 @@ XTTS_MODEL_NAME = os.getenv(
     "XTTS_MODEL_NAME", "tts_models/multilingual/multi-dataset/xtts_v2"
 )
 TTS_LANGUAGE = os.getenv("TTS_LANGUAGE", "zh-cn")  # XTTS language code for Chinese
+
+# Subtitle burn-in font (FFmpeg drawtext). Explicit fontfile avoids relying on
+# fontconfig, which is frequently unconfigured on Windows and crashes drawtext
+# rather than failing gracefully. Default is Traditional Chinese (JhengHei).
+DRAWTEXT_FONT_FILE = os.getenv("DRAWTEXT_FONT_FILE", r"C:\Windows\Fonts\msjh.ttc")

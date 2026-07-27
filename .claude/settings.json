@@ -64,5 +64,20 @@
       "Bash(git push --force*)",
       "Bash(rm -rf /*)"
     ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/post-edit.sh",
+            "timeout": 60,
+            "statusMessage": "正在執行 Linter／Formatter..."
+          }
+        ]
+      }
+    ]
   }
 }

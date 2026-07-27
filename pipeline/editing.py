@@ -3,6 +3,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from pipeline import config
+
 PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 
 # Output frame: 9:16 vertical, matching docs/architecture.md platform target
@@ -16,6 +18,13 @@ def _escape_drawtext(text: str) -> str:
         .replace(":", "\\:")
         .replace("'", "\\'")
     )
+
+
+def _escape_filter_path(path: str) -> str:
+    """Escape a filesystem path for embedding inside an ffmpeg filter
+    argument (e.g. drawtext=fontfile=...). Forward slashes avoid Windows
+    backslash-escaping headaches; the drive-letter colon still needs escaping."""
+    return path.replace("\\", "/").replace(":", "\\:")
 
 
 def build_scene_clip(
@@ -46,7 +55,8 @@ def build_scene_clip(
         video_input = ["-i", visual_path]
 
     drawtext = (
-        f"drawtext=text='{_escape_drawtext(subtitle_text)}':"
+        f"drawtext=fontfile='{_escape_filter_path(config.DRAWTEXT_FONT_FILE)}':"
+        f"text='{_escape_drawtext(subtitle_text)}':"
         "fontcolor=white:fontsize=54:box=1:boxcolor=black@0.5:boxborderw=12:"
         "x=(w-text_w)/2:y=h-260"
     )

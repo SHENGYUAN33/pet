@@ -87,6 +87,26 @@
 - 腳本/分鏡一律走結構化 JSON（見 docs/schemas/），不要用純文字文案當作腳本的唯一表示
 - 尚未有測試/建置指令可執行；一旦專案初始化出 package.json / pyproject.toml，回頭更新本文件的「常用指令」章節
 
+## Rules & Constraints
+
+### 安全性（硬性規範，不可違背）
+- **禁止把秘密寫進程式碼或版控**：API金鑰、資料庫連線字串、TTS/LLM provider token 一律走 `.env`（已被 `.gitignore` 排除）或環境變數，程式碼中只能出現 `os.environ` / `.env` 讀取邏輯，不得出現任何硬編碼金鑰、密碼、connection string
+- **真實寵物/收容所個資預設走本地開源模型**（見上方「開發規範」），涉及送外部商用 API 的資料必須先確認該筆已標記可外送；不確定時視為不可外送
+- **Provider Adapter 是唯一對外呼叫層**：任何新增的外部 API 呼叫都必須經過 `providers/` 下的 adapter，不得在 `pipeline/` 業務邏輯或 agent 程式碼中直接 import 特定廠商 SDK 或直接發 HTTP request 給外部服務
+- **輸入驗證**：所有外部輸入（上傳的照片/影片/JSON、Pet Profile、使用者在審核介面填寫的文字）在進入 pipeline 前都要經過 schema 驗證（見 `docs/schemas/`），不得信任未驗證的輸入直接組字串下 shell 指令或 SQL
+- **禁止字串拼接組 SQL**：資料庫查詢一律用參數化查詢（parameterized query）或 ORM，不得用 f-string/字串拼接組 SQL 語句
+- **禁止字串拼接組 shell 指令**：呼叫 `ffmpeg`/`ffprobe` 等外部程式時，參數一律用 list 形式傳給 `subprocess`（`shell=False`），不得把使用者可控的檔名/文字直接嵌進 shell 字串
+- **輸出內容不得外洩敏感資訊**：日誌、錯誤訊息、生成紀錄不得包含完整 API 金鑰、收容所內部聯絡方式以外的個資（例如飼主電話、地址全文）
+- **MCP／外部工具存取需經使用者同意**：`.claude/mcp.json` 內的 postgres／github 等 server 屬範本，實際啟用前需確認連線字串/token 來源安全，且不得指向正式環境資料庫做未經確認的寫入操作
+
+### 程式碼品質（硬性規範）
+- **每個新功能／bug fix 都要有對應測試**（`tests/`，用 `pytest`），不接受無測試覆蓋的 pipeline 邏輯變更
+- **合併前必須通過 `ruff check` 與 `ruff format --check`**（`.claude/hooks/post-edit.sh` 會在每次 Edit/Write 後自動跑 `ruff check --fix` + `ruff format`，但送出前仍需確認乾淨）
+- **型別標註**：`pipeline/` 與 `providers/` 下的公開函式/方法一律加 type hints，資料結構優先用 `pydantic` model（對應 Pet Profile / Script schema），不用裸 `dict`
+- **不寫死 magic number／字串**：QA 加權評分門檻（80分）、5-7 鏡頭數量、3-6 秒單鏡頭長度等關鍵參數集中放在 config，不散落在各處程式碼
+- **Provider Adapter 介面變更需保持向下相容**：輸入輸出 schema 不可隨意破壞既有呼叫端，新增能力優先用新方法/新欄位而非改變既有介面語意
+- **錯誤處理只在系統邊界做**：外部 API 呼叫、檔案 I/O、使用者輸入解析需要 try/except 並記錄可追溯的錯誤上下文；內部函式之間的呼叫信任呼叫端已驗證過的資料，不重複防禦
+
 ## 常用指令
 
 ```bash
