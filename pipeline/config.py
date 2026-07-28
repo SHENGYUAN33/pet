@@ -32,3 +32,10 @@ MIN_SCENES = int(os.getenv("MIN_SCENES", "5"))
 MAX_SCENES = int(os.getenv("MAX_SCENES", "7"))
 MIN_SCENE_DURATION = int(os.getenv("MIN_SCENE_DURATION", "3"))
 MAX_SCENE_DURATION = int(os.getenv("MAX_SCENE_DURATION", "6"))
+
+# Pet catalog + generation job history (MVP: replaces scanning storage/profiles/
+# for the pipeline's own reads; storage/assets and storage/output stay on the
+# filesystem — the DB only stores metadata, not media).
+DATABASE_URL = os.getenv(
+    "DATABASE_URL", "postgresql+psycopg://petvideo:changeme@localhost:5433/petvideo"
+)

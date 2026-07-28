@@ -14,6 +14,7 @@ from pipeline.editing import (
 )
 from pipeline.fact_check import find_missing_disclosures
 from pipeline.narration import silence_scenes, synthesize_scenes
+from pipeline.pet_repo import get_pet, record_generation_job
 from pipeline.profile import PetProfile
 from pipeline.qa import validate_script_structure
 from pipeline.script_gen import SCRIPT_STYLES, generate_all_styles
@@ -42,7 +43,7 @@ def _resolve_visual_path(profile: PetProfile, visual_source: str) -> Path:
 
 def generate_video(
     *,
-    profile_path: str,
+    pet_id: str,
     voice_sample: str | None = None,
     music_track: str | None = None,
     style: str = "cute",
@@ -52,7 +53,12 @@ def generate_video(
     per scene) — useful for testing script generation and video assembly
     before a TTS voice reference is available. music_track=None skips
     background music (narration/silence only)."""
-    profile = PetProfile.load(profile_path)
+    profile = get_pet(pet_id)
+    if profile is None:
+        raise ValueError(
+            f"No pet found with id {pet_id!r} — import it first: "
+            f"python -m pipeline.manage import-profile <path>"
+        )
 
     llm = OllamaLLMProvider()
     scripts = generate_all_styles(profile, llm, duration=duration)
@@ -60,6 +66,9 @@ def generate_video(
     work_dir = config.OUTPUT_DIR / profile.pet_id
     scripts_dir = work_dir / "scripts"
     scripts_dir.mkdir(parents=True, exist_ok=True)
+
+    selected_missing: list[str] = []
+    selected_structure_issues: list[str] = []
     for name, s in scripts.items():
         missing = find_missing_disclosures(s, profile)
         s["_disclosure_check"] = {"missing_restrictions": missing}
@@ -73,6 +82,10 @@ def generate_video(
         s["_structure_check"] = {"issues": structure_issues}
         if structure_issues:
             print(f"[WARNING] style={name!r} has structural issues: {structure_issues}")
+
+        if name == style:
+            selected_missing = missing
+            selected_structure_issues = structure_issues
 
         (scripts_dir / f"{name}.json").write_text(
             json.dumps(s, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -122,14 +135,26 @@ def generate_video(
 
     final_path = work_dir / f"{profile.pet_id}_{style}_{duration}s.mp4"
     mux_video_audio(concatenated_video, final_audio, str(final_path))
+
+    record_generation_job(
+        profile.pet_id,
+        style=style,
+        duration=duration,
+        output_path=str(final_path),
+        disclosure_missing=selected_missing,
+        structure_issues=selected_structure_issues,
+    )
+
     return final_path
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="PoC pipeline: generate a pet adoption video from a Pet Profile JSON"
+        description="MVP pipeline: generate a pet adoption video for a pet in the catalog"
     )
-    parser.add_argument("--profile", required=True, help="Path to pet profile JSON")
+    parser.add_argument(
+        "--pet-id", required=True, help="Pet id in the catalog (see pipeline.manage)"
+    )
     parser.add_argument(
         "--voice-sample",
         default=None,
@@ -145,7 +170,7 @@ def main():
     args = parser.parse_args()
 
     output_path = generate_video(
-        profile_path=args.profile,
+        pet_id=args.pet_id,
         voice_sample=args.voice_sample,
         music_track=args.music_track,
         style=args.style,

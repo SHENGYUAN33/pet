@@ -61,14 +61,14 @@
 
 素材組成建議比例（避免一開始做「完全生成式影片」）：60% 真實影片剪輯 / 20% 照片動態化 / 10% 字幕與貼圖 / 10% AI 生成場景。
 
-目前所在階段：**PoC 開發中**。已建立 `pipeline/`（profile 載入、腳本生成、旁白合成、FFmpeg 剪輯、CLI）與 `providers/`（Ollama LLM、Coqui XTTS-v2 TTS）的最小可行實作，尚未實際跑通端到端流程（需要本機已 `ollama pull` 模型、安裝 `coqui-tts` 及有真實素材）。開發時請先確認目前實際完成到哪個階段，不要假設後期功能已存在。
+目前所在階段：**MVP 開發中（第一個切片：多寵物管理／資料層）**。PoC 已驗證完成（腳本生成、剪輯、混音、結構/揭露檢查都跑通並有測試）。MVP 第一步引入 PostgreSQL（見 `docker-compose.yml`）取代 PoC 階段掃描 `storage/profiles/*.json` 的權宜做法：`pipeline/db.py`／`pipeline/models.py`／`pipeline/pet_repo.py` 是資料層，`pipeline/manage.py` 是管理 CLI（`init-db`／`import-profile`／`list-pets`／`show-pet`），`pipeline/run.py` 已改成 `--pet-id` 從 DB 讀 Profile。`GenerationJob` 目前只是「完成生成後留一筆紀錄」的攤平 log，**不是**完整的非同步 Job 狀態機（那是下一個 MVP 切片「分鏡編輯＋單鏡頭重生」的範圍）。開發時請先確認目前實際完成到哪個階段，不要假設後期功能已存在。
 
-### PoC 實作邊界（開源優先，對應規劃時的技術選型決策）
+### PoC 實作邊界（開源優先，對應規劃時的技術選型決策，MVP 階段陸續補上）
 - LLM：Ollama + Qwen2.5-7B-Instruct（`pipeline/config.py` 可透過 `.env` 覆寫模型/host）
 - TTS：Coqui XTTS-v2（zero-shot voice cloning，需一段參考語音 wav）
-- VLM／影片生成 I2V／音樂生成：**PoC 階段刻意省略**，素材品質檢查靠人工選片，影片以真實素材剪輯＋照片 Ken Burns 動態為主（見 docs/architecture.md §5 策略 A）
-- 任務編排／資料庫：PoC 用同步流程＋本機資料夾，不上 Celery/Temporal/PostgreSQL，MVP 階段才依規模導入
-- Provider Adapter 目前只有單一實作（`providers/llm/ollama_provider.py`、`providers/tts/xtts_provider.py`），Router／多 provider 切換留到 MVP
+- VLM／影片生成 I2V／音樂生成：**仍刻意省略**，素材品質檢查靠人工選片，影片以真實素材剪輯＋照片 Ken Burns 動態為主（見 docs/architecture.md §5 策略 A）；MVP 後續切片才會接 Image-to-Video
+- 任務編排：仍是同步流程，Celery/Temporal 留到規模需要時才導入；**資料庫已從 MVP 第一個切片開始改用 PostgreSQL**（見上）
+- Provider Adapter 目前只有單一實作（`providers/llm/ollama_provider.py`、`providers/tts/xtts_provider.py`），Router／多 provider 切換留到後續 MVP 切片
 
 ## 建議技術棧（規劃中，實作時以實際程式碼為準）
 - 任務編排：Temporal 或 Celery
@@ -113,23 +113,33 @@
 # 環境設定
 python -m venv .venv && source .venv/Scripts/activate   # Windows Git Bash
 pip install -e ".[dev]"
-cp .env.example .env   # 依需要調整 OLLAMA_MODEL / XTTS_MODEL_NAME
+cp .env.example .env   # 依需要調整 OLLAMA_MODEL / XTTS_MODEL_NAME / DATABASE_URL
 
 # 確認 Ollama 模型已就緒（需先安裝並啟動 Ollama）
 ollama pull qwen2.5:7b-instruct
 ollama list
 
+# 啟動 PostgreSQL（需先手動啟動 Docker Desktop）
+docker compose up -d
+python -m pipeline.manage init-db
+
+# 匯入寵物 Profile 到資料庫（storage/profiles/*.json 只是匯入格式，不再是 pipeline 讀取來源）
+python -m pipeline.manage import-profile storage/profiles/<pet_id>.json
+python -m pipeline.manage list-pets
+python -m pipeline.manage show-pet <pet_id>   # 看 Profile + 生成歷程
+
 # 測試
 pytest
 ruff check .
 
-# 執行 PoC pipeline（需準備好 Pet Profile JSON、真實素材、參考語音 wav）
+# 執行 pipeline（pet_id 需已匯入資料庫；素材與參考語音 wav 為選用）
 python -m pipeline.run \
-  --profile storage/profiles/<pet_id>.json \
+  --pet-id <pet_id> \
   --voice-sample storage/assets/<pet_id>/voice_ref.wav \
+  --music-track storage/assets/<pet_id>/music.mp3 \
   --style cute \
   --duration 30
 # 或在 Claude Code 內用 /gen-video 自訂 slash command
 ```
 
-素材放置慣例：`storage/profiles/<pet_id>.json`（Profile）、`storage/assets/<pet_id>/`（原始照片/影片/語音樣本，對應 Profile 的 `media.assets[].url` 檔名）、`storage/output/<pet_id>/`（生成結果，含三種風格腳本 JSON、各鏡頭 clip、最終影片）。這三個資料夾內容都被 `.gitignore` 排除，不會進版控。
+素材放置慣例：`storage/assets/<pet_id>/`（原始照片/影片/語音樣本，對應 Profile 的 `media.assets[].url` 檔名）、`storage/output/<pet_id>/`（生成結果，含三種風格腳本 JSON、各鏡頭 clip、最終影片）。這兩個資料夾內容都被 `.gitignore` 排除，不會進版控。`storage/profiles/*.json` 是匯入資料庫用的格式範本，實際運作時 pipeline 讀的是資料庫，不是這個資料夾。
