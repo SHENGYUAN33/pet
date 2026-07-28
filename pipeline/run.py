@@ -20,6 +20,8 @@ def generate_video(
     music_track: str | None = None,
     style: str = "cute",
     duration: int = 30,
+    animate_scenes: set[int] | None = None,
+    video_provider: str = "svd",
 ) -> tuple[str, int]:
     """voice_sample=None runs without narration (silent placeholder audio
     per scene) — useful for testing script generation and video assembly
@@ -70,7 +72,13 @@ def generate_video(
 
     work_dir = config.OUTPUT_DIR / profile.pet_id / f"gen_{uuid.uuid4().hex[:8]}"
     final_path = render_script(
-        profile, script, work_dir, voice_sample=voice_sample, music_track=music_track
+        profile,
+        script,
+        work_dir,
+        voice_sample=voice_sample,
+        music_track=music_track,
+        animate_scenes=animate_scenes,
+        video_provider=video_provider,
     )
 
     job_id = record_generation_job(
@@ -105,7 +113,23 @@ def main():
     )
     parser.add_argument("--style", default="cute", choices=SCRIPT_STYLES)
     parser.add_argument("--duration", type=int, default=30)
+    parser.add_argument(
+        "--animate-scenes",
+        default=None,
+        help="Comma-separated scene ids to animate via Image-to-Video instead of "
+        "Ken Burns (only applies to photo-sourced scenes), e.g. 2,4",
+    )
+    parser.add_argument(
+        "--video-provider",
+        default="svd",
+        choices=["svd", "cogvideox"],
+        help="Which open-source I2V model to use with --animate-scenes (default: svd)",
+    )
     args = parser.parse_args()
+
+    animate_scenes = (
+        {int(s) for s in args.animate_scenes.split(",")} if args.animate_scenes else None
+    )
 
     output_path, job_id = generate_video(
         pet_id=args.pet_id,
@@ -113,6 +137,8 @@ def main():
         music_track=args.music_track,
         style=args.style,
         duration=args.duration,
+        animate_scenes=animate_scenes,
+        video_provider=args.video_provider,
     )
     print(f"Job id: {job_id}")
     print(f"Done: {output_path}")

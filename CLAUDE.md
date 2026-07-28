@@ -61,10 +61,13 @@
 
 素材組成建議比例（避免一開始做「完全生成式影片」）：60% 真實影片剪輯 / 20% 照片動態化 / 10% 字幕與貼圖 / 10% AI 生成場景。
 
-目前所在階段：**MVP 開發中（第二個切片：分鏡編輯／單鏡頭重生完成）**。
+目前所在階段：**MVP 開發中（第三個切片：Image-to-Video + 簡易 FastAPI/前端完成）**。
 
 - 第一個切片（多寵物管理／PostgreSQL 資料層）：`pipeline/db.py`／`pipeline/models.py`／`pipeline/pet_repo.py`，管理 CLI `pipeline/manage.py`（`init-db`／`import-profile`／`list-pets`／`show-pet`）
 - 第二個切片（分鏡編輯／單鏡頭重生）：渲染邏輯抽到 `pipeline/rendering.py`（`render_script`，`generate_video` 與 `regenerate_scene` 共用，不重複寫一次），每次生成都在 `storage/output/<pet_id>/gen_<8碼token>/` 有自己的子資料夾（不再共用同一層、不會互相覆蓋鏡頭檔案）。`pipeline/regen.py` 提供 `apply_scene_overrides`（純函式）＋ `regenerate_scene`（patch 單一鏡頭素材/字幕/旁白後只重新渲染，不重跑 LLM），CLI 是 `pipeline/regenerate.py`。`GenerationJob` 現在存完整 `script_json`，`parent_job_id` 把重新生成的版本連回原始 job——**每次重生都是新的一筆紀錄，不覆蓋舊的**，原始輸出檔案與紀錄都保留供追溯。
+- 第三個切片（Image-to-Video＋簡易 FastAPI/前端）：
+  - **I2V（策略 B）**：`providers/base.py` 新增 `VideoGenerationProvider`，`providers/video/svd_provider.py`（SVD-XT）與 `providers/video/cogvideox_provider.py`（`CogVideoX-5b-I2V`——沒有官方 2B 的 I2V 檢查點）都已實作並可透過 `pipeline/i2v.py` 的 `get_video_provider()` 切換。`pipeline/rendering.py render_script()` 新增 `animate_scenes`/`video_provider` 參數：指定的照片鏡頭會先呼叫 I2V provider 產生暫存影片，再交給既有的 `build_scene_clip`（真實影片那條路徑：loop/裁切/固定fps）處理，沒有另外寫一套邏輯。`pipeline/run.py --animate-scenes 2,4`、`pipeline/regenerate.py --animate` 都可以用。**已在這張機器（RTX 5070 Ti，16GB VRAM）用元寶的照片跑過 SVD 手動 smoke test，確認真的能產生動態效果**；CogVideoX-5b-I2V 目前只實作了介面，還沒手動跑過（5B 模型在 16GB VRAM 上可能吃緊，需要時再驗證）。
+  - **簡易 FastAPI/前端**：`webapp/main.py`（FastAPI，直接呼叫既有的 `pipeline.pet_repo`／`pipeline.run`／`pipeline.regen`，不重寫業務邏輯）＋ `webapp/static/index.html`（純 HTML/JS，無建置流程，不是架構文件最終目標的 React/Next.js）。**生成/重生是同步阻塞 API**，還沒有非同步 Job 狀態機，請求會等到 FFmpeg/TTS/LLM 跑完才回應（可能 10-60 秒）。
 
 `GenerationJob` 仍是「完成後留一筆紀錄」的攤平 log，**不是**完整的非同步 Job 狀態機（docs/architecture.md §10 的狀態機仍未實作，目前沒有 PENDING/RUNNING 這種中間狀態，都是跑完才寫進 DB）。開發時請先確認目前實際完成到哪個階段，不要假設後期功能已存在。
 
@@ -73,9 +76,10 @@
 ### PoC 實作邊界（開源優先，對應規劃時的技術選型決策，MVP 階段陸續補上）
 - LLM：Ollama + Qwen2.5-7B-Instruct（`pipeline/config.py` 可透過 `.env` 覆寫模型/host）
 - TTS：Coqui XTTS-v2（zero-shot voice cloning，需一段參考語音 wav）
-- VLM／影片生成 I2V／音樂生成：**仍刻意省略**，素材品質檢查靠人工選片，影片以真實素材剪輯＋照片 Ken Burns 動態為主（見 docs/architecture.md §5 策略 A）；MVP 後續切片才會接 Image-to-Video
-- 任務編排：仍是同步流程，Celery/Temporal 留到規模需要時才導入；**資料庫已從 MVP 第一個切片開始改用 PostgreSQL**（見上）
-- Provider Adapter 目前只有單一實作（`providers/llm/ollama_provider.py`、`providers/tts/xtts_provider.py`），Router／多 provider 切換留到後續 MVP 切片
+- 影片生成 I2V：**已接**（SVD/CogVideoX，見上），只在明確指定 `animate_scenes`／`--animate` 時才用，預設仍是真實素材剪輯＋照片 Ken Burns（策略 A 優先，I2V 只補位）
+- VLM／音樂生成：仍刻意省略，素材品質檢查靠人工選片
+- 任務編排：仍是同步流程，Celery/Temporal 留到規模需要時才導入；資料庫用 PostgreSQL（見上）
+- Provider Adapter：LLM/TTS/I2V 都已有具體實作（`providers/llm/`、`providers/tts/`、`providers/video/`），但都還是「呼叫端寫死選哪個 provider」，還沒有 Router／依內容敏感度或成本自動切換，留到後續 MVP 切片
 
 ## 建議技術棧（規劃中，實作時以實際程式碼為準）
 - 任務編排：Temporal 或 Celery
@@ -152,6 +156,17 @@ python -m pipeline.run \
 python -m pipeline.regenerate <job_id> <scene_id> \
   --subtitle "新的字幕" \
   --music-track storage/assets/<pet_id>/music.mp3   # voice-sample/music-track 需比照原本生成時再傳一次
+
+# Image-to-Video（需要 CUDA GPU；torch 要裝對應 CUDA 版本的 wheel，不能只 pip install torch）
+pip install torch --index-url https://download.pytorch.org/whl/cu128   # 依實際 GPU/CUDA 版本調整
+pip install -e ".[i2v]"
+python -m pipeline.regenerate <job_id> <scene_id> --animate --video-provider svd   # 或 cogvideox
+
+# 簡易 FastAPI + 前端（無建置流程的純 HTML/JS，不是最終目標的 React/Next.js）
+pip install -e ".[web]"
+python -m uvicorn webapp.main:app --reload   # 開 http://localhost:8000
+# 用 "python -m uvicorn"，不要直接打 "uvicorn"：這台機器 PATH 上可能有其他 Python
+# 安裝的 uvicorn.exe，會用錯環境（找不到 psycopg 等套件）
 ```
 
 素材放置慣例：`storage/assets/<pet_id>/`（原始照片/影片/語音樣本，對應 Profile 的 `media.assets[].url` 檔名）、`storage/output/<pet_id>/gen_<token>/`（每次生成/重生獨立的輸出子資料夾，含三種風格腳本 JSON、各鏡頭 clip、最終影片）。這兩個資料夾內容都被 `.gitignore` 排除，不會進版控。`storage/profiles/*.json` 是匯入資料庫用的格式範本，實際運作時 pipeline 讀的是資料庫，不是這個資料夾。

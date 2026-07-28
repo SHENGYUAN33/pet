@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8" />
+<title>寵物領養影片 — 審核工具</title>
+<style>
+  body { font-family: -apple-system, "Microsoft JhengHei", sans-serif; margin: 0; display: flex; height: 100vh; }
+  aside { width: 220px; border-right: 1px solid #ccc; overflow-y: auto; padding: 12px; box-sizing: border-box; }
+  main { flex: 1; display: flex; overflow: hidden; }
+  section.center { flex: 2; padding: 16px; overflow-y: auto; }
+  section.side { flex: 1; padding: 16px; border-left: 1px solid #ccc; overflow-y: auto; box-sizing: border-box; }
+  h2 { margin-top: 0; }
+  .pet-item { padding: 8px; cursor: pointer; border-radius: 4px; }
+  .pet-item:hover, .pet-item.active { background: #eee; }
+  video { width: 100%; max-width: 480px; background: #000; }
+  form { display: flex; flex-direction: column; gap: 8px; margin-bottom: 24px; }
+  label { font-size: 0.85em; color: #444; }
+  input, select { padding: 4px; }
+  button { padding: 6px 12px; cursor: pointer; }
+  .job { border: 1px solid #ddd; border-radius: 4px; padding: 8px; margin-bottom: 8px; font-size: 0.85em; }
+  .warning { color: #b30000; }
+  pre { white-space: pre-wrap; font-size: 0.8em; background: #f7f7f7; padding: 8px; }
+</style>
+</head>
+<body>
+
+<aside>
+  <h3>寵物</h3>
+  <div id="pet-list">載入中…</div>
+</aside>
+
+<main>
+  <section class="center">
+    <h2 id="pet-title">請選擇一隻寵物</h2>
+    <video id="video-player" controls></video>
+    <h3>生成歷程</h3>
+    <div id="job-list"></div>
+  </section>
+
+  <section class="side">
+    <h3>產生新影片</h3>
+    <form id="generate-form">
+      <label>風格
+        <select name="style">
+          <option value="cute">萌系 cute</option>
+          <option value="warm_story">溫暖故事 warm_story</option>
+          <option value="contrast_humor">反差幽默 contrast_humor</option>
+        </select>
+      </label>
+      <label>時長（秒）<input type="number" name="duration" value="30" /></label>
+      <label>語音參考檔路徑（選填）<input type="text" name="voice_sample" /></label>
+      <label>背景音樂路徑（選填）<input type="text" name="music_track" /></label>
+      <button type="submit">產生影片（會等到完成，可能要 10-60 秒）</button>
+    </form>
+
+    <h3>單鏡頭重生</h3>
+    <form id="regenerate-form">
+      <label>Job id<input type="number" name="job_id" required /></label>
+      <label>Scene id<input type="number" name="scene_id" required /></label>
+      <label>新素材 asset_id（選填）<input type="text" name="visual_source" /></label>
+      <label>新字幕（選填）<input type="text" name="subtitle" /></label>
+      <label>新旁白（選填）<input type="text" name="narration" /></label>
+      <label>語音參考檔路徑（選填）<input type="text" name="voice_sample" /></label>
+      <label>背景音樂路徑（選填）<input type="text" name="music_track" /></label>
+      <label><input type="checkbox" name="animate" /> 用 AI 動態化（Image-to-Video）取代 Ken Burns</label>
+      <label>影片生成模型
+        <select name="video_provider">
+          <option value="svd">SVD</option>
+          <option value="cogvideox">CogVideoX</option>
+        </select>
+      </label>
+      <button type="submit">重新生成這個鏡頭</button>
+    </form>
+
+    <div id="status"></div>
+  </section>
+</main>
+
+<script>
+let currentPetId = null;
+
+function setStatus(text, isError) {
+  const el = document.getElementById("status");
+  el.textContent = text;
+  el.className = isError ? "warning" : "";
+}
+
+async function loadPets() {
+  const res = await fetch("/api/pets");
+  const pets = await res.json();
+  const list = document.getElementById("pet-list");
+  list.innerHTML = "";
+  for (const pet of pets) {
+    const div = document.createElement("div");
+    div.className = "pet-item";
+    div.textContent = `${pet.name} (${pet.pet_id})`;
+    div.onclick = () => selectPet(pet.pet_id);
+    list.appendChild(div);
+  }
+}
+
+async function selectPet(petId) {
+  currentPetId = petId;
+  document.querySelectorAll(".pet-item").forEach(el => el.classList.remove("active"));
+  const res = await fetch(`/api/pets/${petId}`);
+  if (!res.ok) {
+    setStatus(`找不到寵物 ${petId}`, true);
+    return;
+  }
+  const data = await res.json();
+  document.getElementById("pet-title").textContent = `${data.profile.name} (${petId})`;
+
+  const jobs = data.jobs;
+  const jobList = document.getElementById("job-list");
+  jobList.innerHTML = "";
+  const player = document.getElementById("video-player");
+  if (jobs.length > 0) {
+    player.src = `/api/jobs/${jobs[0].id}/video`;
+  } else {
+    player.removeAttribute("src");
+  }
+
+  for (const job of jobs) {
+    const div = document.createElement("div");
+    div.className = "job";
+    div.innerHTML = `
+      <strong>Job ${job.id}</strong> (${job.style}, ${job.duration}s, ${job.scene_count} 鏡頭)
+      ${job.parent_job_id ? `— 重生自 job ${job.parent_job_id}` : ""}
+      <br><a href="#" data-job="${job.id}">播放這個版本</a>
+      ${job.disclosure_missing.missing_restrictions.length ? `<div class="warning">缺揭露: ${job.disclosure_missing.missing_restrictions.join("、")}</div>` : ""}
+      ${job.structure_issues.issues.length ? `<div class="warning">結構問題: ${job.structure_issues.issues.join("；")}</div>` : ""}
+    `;
+    div.querySelector("a").onclick = (e) => {
+      e.preventDefault();
+      player.src = `/api/jobs/${job.id}/video`;
+      player.play();
+    };
+    jobList.appendChild(div);
+  }
+}
+
+document.getElementById("generate-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!currentPetId) { setStatus("請先選擇一隻寵物", true); return; }
+  const form = new FormData(e.target);
+  const body = {
+    style: form.get("style"),
+    duration: parseInt(form.get("duration"), 10),
+    voice_sample: form.get("voice_sample") || null,
+    music_track: form.get("music_track") || null,
+  };
+  setStatus("生成中，請稍候…");
+  const res = await fetch(`/api/pets/${currentPetId}/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    setStatus(`失敗: ${data.detail}`, true);
+    return;
+  }
+  setStatus(`完成！Job id: ${data.job_id}`);
+  selectPet(currentPetId);
+});
+
+document.getElementById("regenerate-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = new FormData(e.target);
+  const jobId = form.get("job_id");
+  const body = {
+    scene_id: parseInt(form.get("scene_id"), 10),
+    visual_source: form.get("visual_source") || null,
+    subtitle: form.get("subtitle") || null,
+    narration: form.get("narration") || null,
+    voice_sample: form.get("voice_sample") || null,
+    music_track: form.get("music_track") || null,
+    animate: form.get("animate") === "on",
+    video_provider: form.get("video_provider"),
+  };
+  setStatus("重新生成中，請稍候…");
+  const res = await fetch(`/api/jobs/${jobId}/regenerate-scene`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    setStatus(`失敗: ${data.detail}`, true);
+    return;
+  }
+  setStatus(`完成！新 job id: ${data.job_id}`);
+  if (currentPetId) selectPet(currentPetId);
+});
+
+loadPets();
+</script>
+
+</body>
+</html>

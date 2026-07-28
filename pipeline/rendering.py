@@ -5,11 +5,13 @@ from pathlib import Path
 from pipeline import config
 from pipeline.audio_mix import mix_narration_with_music
 from pipeline.editing import (
+    PHOTO_EXTENSIONS,
     build_scene_clip,
     concat_audio,
     concat_video_only,
     mux_video_audio,
 )
+from pipeline.i2v import animate_photo, get_video_provider
 from pipeline.narration import silence_scenes, synthesize_scenes
 from pipeline.profile import PetProfile
 from providers.tts.xtts_provider import XTTSProvider
@@ -41,14 +43,23 @@ def render_script(
     *,
     voice_sample: str | None = None,
     music_track: str | None = None,
+    animate_scenes: set[int] | None = None,
+    video_provider: str = "svd",
 ) -> Path:
     """Render a single already-selected script into a final MP4 inside
     work_dir: narration/silence per scene, per-scene video clips (real
-    footage or photo Ken Burns), concatenation, optional music mixing, and
-    the final mux. Shared by pipeline.run.generate_video (fresh generation)
-    and pipeline.regen.regenerate_scene (single-shot revision) so both
-    paths render identically without duplicating this logic."""
+    footage, photo Ken Burns, or Image-to-Video), concatenation, optional
+    music mixing, and the final mux. Shared by pipeline.run.generate_video
+    (fresh generation) and pipeline.regen.regenerate_scene (single-shot
+    revision) so both paths render identically without duplicating this
+    logic.
+
+    animate_scenes (docs/architecture.md §5 strategy B): scene_ids whose
+    photo source should be animated via an open-source Image-to-Video model
+    instead of Ken Burns — only meaningful for photo-sourced scenes, and
+    only instantiates the (heavy) video_provider once, not per scene."""
     work_dir.mkdir(parents=True, exist_ok=True)
+    animate_scenes = animate_scenes or set()
 
     if voice_sample:
         tts = XTTSProvider()
@@ -58,14 +69,28 @@ def render_script(
     else:
         audio_paths = silence_scenes(script, work_dir / "audio")
 
+    i2v_provider = get_video_provider(video_provider) if animate_scenes else None
+
     video_clip_paths = []
     ordered_audio_paths = []
     for scene in script["scenes"]:
         visual_path = _resolve_visual_path(profile, scene["visual_source"])
+        duration = scene["end"] - scene["start"]
+
+        if scene["scene_id"] in animate_scenes and visual_path.suffix.lower() in PHOTO_EXTENSIONS:
+            i2v_path = work_dir / f"scene_{scene['scene_id']}_i2v.mp4"
+            animate_photo(
+                str(visual_path), i2v_provider, duration=duration, output_path=str(i2v_path)
+            )
+            # build_scene_clip below treats any non-photo-suffix input as
+            # real footage (loop-if-short + crop, see pipeline/editing.py),
+            # which is exactly what a raw I2V clip needs too.
+            visual_path = i2v_path
+
         clip_path = work_dir / f"scene_{scene['scene_id']}.mp4"
         build_scene_clip(
             visual_path=str(visual_path),
-            duration=scene["end"] - scene["start"],
+            duration=duration,
             subtitle_text=scene["subtitle"],
             output_path=str(clip_path),
         )

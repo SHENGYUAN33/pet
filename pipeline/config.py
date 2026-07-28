@@ -39,3 +39,13 @@ MAX_SCENE_DURATION = int(os.getenv("MAX_SCENE_DURATION", "6"))
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql+psycopg://petvideo:changeme@localhost:5433/petvideo"
 )
+
+# Image-to-Video (docs/architecture.md §5 strategy B) — open-source, self-hosted.
+# CogVideoX's officially released image-to-video checkpoint is the 5B variant;
+# there is no 2B I2V checkpoint despite "CogVideoX-2B" being the commonly
+# cited name for the (text-to-video) line.
+SVD_MODEL_NAME = os.getenv("SVD_MODEL_NAME", "stabilityai/stable-video-diffusion-img2vid-xt")
+COGVIDEOX_MODEL_NAME = os.getenv("COGVIDEOX_MODEL_NAME", "THUDM/CogVideoX-5b-I2V")
+COGVIDEOX_DEFAULT_PROMPT = os.getenv(
+    "COGVIDEOX_DEFAULT_PROMPT", "The subject moves naturally and subtly."
+)
