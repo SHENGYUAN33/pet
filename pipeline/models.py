@@ -34,10 +34,17 @@ class Pet(Base):
 
 
 class GenerationJob(Base):
-    """One row per completed pipeline.run.generate_video() call. This is a
-    flat completed-run log for MVP slice 1 (多寵物管理＋資料層) — not the full
-    async per-scene Job state machine from docs/architecture.md §10, which is
-    the next slice (分鏡編輯＋單鏡頭重生)."""
+    """One row per completed generation or single-shot regeneration
+    (pipeline.run.generate_video / pipeline.regen.regenerate_scene). This is
+    a flat completed-run log, not the full async per-scene Job state machine
+    from docs/architecture.md §10 — still deferred.
+
+    script_json is the exact script (scenes + disclosure/structure check
+    results) actually rendered, so a later regenerate_scene() call can load
+    "what this job used" without re-deriving it. parent_job_id links a
+    revision back to the job it was regenerated from (None for a fresh
+    generate_video() run) — revisions are new rows, never overwrites, so
+    prior output files and their audit trail stay intact."""
 
     __tablename__ = "generation_jobs"
 
@@ -48,6 +55,14 @@ class GenerationJob(Base):
     output_path: Mapped[str] = mapped_column(String)
     disclosure_missing: Mapped[dict] = mapped_column(JSONB)
     structure_issues: Mapped[dict] = mapped_column(JSONB)
+    script_json: Mapped[dict] = mapped_column(JSONB)
+    # ondelete="SET NULL": deleting a pet cascades to delete all its jobs in
+    # one statement with no guaranteed order, so a parent job could be
+    # deleted before its revision — without SET NULL that trips this
+    # self-referential FK's integrity check (found by test_pet_repo.py).
+    parent_job_id: Mapped[int | None] = mapped_column(
+        ForeignKey("generation_jobs.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     pet: Mapped[Pet] = relationship(back_populates="generation_jobs")

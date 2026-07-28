@@ -61,7 +61,14 @@
 
 素材組成建議比例（避免一開始做「完全生成式影片」）：60% 真實影片剪輯 / 20% 照片動態化 / 10% 字幕與貼圖 / 10% AI 生成場景。
 
-目前所在階段：**MVP 開發中（第一個切片：多寵物管理／資料層）**。PoC 已驗證完成（腳本生成、剪輯、混音、結構/揭露檢查都跑通並有測試）。MVP 第一步引入 PostgreSQL（見 `docker-compose.yml`）取代 PoC 階段掃描 `storage/profiles/*.json` 的權宜做法：`pipeline/db.py`／`pipeline/models.py`／`pipeline/pet_repo.py` 是資料層，`pipeline/manage.py` 是管理 CLI（`init-db`／`import-profile`／`list-pets`／`show-pet`），`pipeline/run.py` 已改成 `--pet-id` 從 DB 讀 Profile。`GenerationJob` 目前只是「完成生成後留一筆紀錄」的攤平 log，**不是**完整的非同步 Job 狀態機（那是下一個 MVP 切片「分鏡編輯＋單鏡頭重生」的範圍）。開發時請先確認目前實際完成到哪個階段，不要假設後期功能已存在。
+目前所在階段：**MVP 開發中（第二個切片：分鏡編輯／單鏡頭重生完成）**。
+
+- 第一個切片（多寵物管理／PostgreSQL 資料層）：`pipeline/db.py`／`pipeline/models.py`／`pipeline/pet_repo.py`，管理 CLI `pipeline/manage.py`（`init-db`／`import-profile`／`list-pets`／`show-pet`）
+- 第二個切片（分鏡編輯／單鏡頭重生）：渲染邏輯抽到 `pipeline/rendering.py`（`render_script`，`generate_video` 與 `regenerate_scene` 共用，不重複寫一次），每次生成都在 `storage/output/<pet_id>/gen_<8碼token>/` 有自己的子資料夾（不再共用同一層、不會互相覆蓋鏡頭檔案）。`pipeline/regen.py` 提供 `apply_scene_overrides`（純函式）＋ `regenerate_scene`（patch 單一鏡頭素材/字幕/旁白後只重新渲染，不重跑 LLM），CLI 是 `pipeline/regenerate.py`。`GenerationJob` 現在存完整 `script_json`，`parent_job_id` 把重新生成的版本連回原始 job——**每次重生都是新的一筆紀錄，不覆蓋舊的**，原始輸出檔案與紀錄都保留供追溯。
+
+`GenerationJob` 仍是「完成後留一筆紀錄」的攤平 log，**不是**完整的非同步 Job 狀態機（docs/architecture.md §10 的狀態機仍未實作，目前沒有 PENDING/RUNNING 這種中間狀態，都是跑完才寫進 DB）。開發時請先確認目前實際完成到哪個階段，不要假設後期功能已存在。
+
+⚠️ **目前沒有上 Alembic**：`pipeline/db.py` 的 `init_db()` 只用 `Base.metadata.create_all()`，改 `pipeline/models.py` 的既有表結構（不是新增表）不會自動反映到已存在的資料庫，需要手動 `DROP TABLE` 該表後重跑 `python -m pipeline.manage init-db` 重建（規模還小，先不上遷移工具；正式有資料量後要改用 Alembic）。
 
 ### PoC 實作邊界（開源優先，對應規劃時的技術選型決策，MVP 階段陸續補上）
 - LLM：Ollama + Qwen2.5-7B-Instruct（`pipeline/config.py` 可透過 `.env` 覆寫模型/host）
@@ -139,7 +146,12 @@ python -m pipeline.run \
   --music-track storage/assets/<pet_id>/music.mp3 \
   --style cute \
   --duration 30
-# 或在 Claude Code 內用 /gen-video 自訂 slash command
+# 印出的 "Job id" 可用來做單鏡頭重生；或在 Claude Code 內用 /gen-video 自訂 slash command
+
+# 單鏡頭重生（不重跑 LLM，只 patch 指定鏡頭後重新渲染整支影片）
+python -m pipeline.regenerate <job_id> <scene_id> \
+  --subtitle "新的字幕" \
+  --music-track storage/assets/<pet_id>/music.mp3   # voice-sample/music-track 需比照原本生成時再傳一次
 ```
 
-素材放置慣例：`storage/assets/<pet_id>/`（原始照片/影片/語音樣本，對應 Profile 的 `media.assets[].url` 檔名）、`storage/output/<pet_id>/`（生成結果，含三種風格腳本 JSON、各鏡頭 clip、最終影片）。這兩個資料夾內容都被 `.gitignore` 排除，不會進版控。`storage/profiles/*.json` 是匯入資料庫用的格式範本，實際運作時 pipeline 讀的是資料庫，不是這個資料夾。
+素材放置慣例：`storage/assets/<pet_id>/`（原始照片/影片/語音樣本，對應 Profile 的 `media.assets[].url` 檔名）、`storage/output/<pet_id>/gen_<token>/`（每次生成/重生獨立的輸出子資料夾，含三種風格腳本 JSON、各鏡頭 clip、最終影片）。這兩個資料夾內容都被 `.gitignore` 排除，不會進版控。`storage/profiles/*.json` 是匯入資料庫用的格式範本，實際運作時 pipeline 讀的是資料庫，不是這個資料夾。

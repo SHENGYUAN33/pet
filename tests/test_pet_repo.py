@@ -95,20 +95,71 @@ def test_list_pets_includes_saved_pet():
     assert TEST_PET_ID in pet_ids
 
 
+def _sample_script() -> dict:
+    return {
+        "scenes": [
+            {"scene_id": 1, "start": 0, "end": 5, "visual_source": "IMG-001", "subtitle": "a"},
+            {"scene_id": 2, "start": 5, "end": 10, "visual_source": "IMG-002", "subtitle": "b"},
+        ]
+    }
+
+
 def test_record_and_list_generation_jobs():
     pet_repo.save_pet(_sample_profile())
 
-    pet_repo.record_generation_job(
+    job_id = pet_repo.record_generation_job(
         TEST_PET_ID,
         style="cute",
         duration=30,
         output_path="storage/output/PET-TEST-REPO-0001/out.mp4",
         disclosure_missing=[],
         structure_issues=["scene 2 has an empty subtitle"],
+        script_json=_sample_script(),
     )
 
     jobs = pet_repo.list_generation_jobs(TEST_PET_ID)
 
+    assert isinstance(job_id, int)
     assert len(jobs) == 1
     assert jobs[0]["style"] == "cute"
     assert jobs[0]["structure_issues"]["issues"] == ["scene 2 has an empty subtitle"]
+    assert jobs[0]["scene_count"] == 2
+    assert jobs[0]["parent_job_id"] is None
+
+
+def test_get_generation_job_returns_full_script_and_regeneration_links_parent():
+    pet_repo.save_pet(_sample_profile())
+
+    job_id = pet_repo.record_generation_job(
+        TEST_PET_ID,
+        style="cute",
+        duration=30,
+        output_path="storage/output/PET-TEST-REPO-0001/out.mp4",
+        disclosure_missing=[],
+        structure_issues=[],
+        script_json=_sample_script(),
+    )
+
+    fetched = pet_repo.get_generation_job(job_id)
+    assert fetched is not None
+    assert fetched["script_json"]["scenes"][0]["visual_source"] == "IMG-001"
+    assert fetched["parent_job_id"] is None
+
+    revision_id = pet_repo.record_generation_job(
+        TEST_PET_ID,
+        style="cute",
+        duration=30,
+        output_path="storage/output/PET-TEST-REPO-0001/out2.mp4",
+        disclosure_missing=[],
+        structure_issues=[],
+        script_json=_sample_script(),
+        parent_job_id=job_id,
+    )
+
+    revision = pet_repo.get_generation_job(revision_id)
+    assert revision is not None
+    assert revision["parent_job_id"] == job_id
+
+
+def test_get_generation_job_returns_none_for_unknown_id():
+    assert pet_repo.get_generation_job(999_999_999) is None

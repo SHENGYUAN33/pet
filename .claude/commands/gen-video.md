@@ -11,4 +11,6 @@ description: 執行 pipeline，依已匯入資料庫的寵物 ID 生成寵物領
 1. 確認 PostgreSQL 有起來（`docker compose ps`）且該 `pet_id` 已在資料庫：`python -m pipeline.manage list-pets`，沒有的話先 `python -m pipeline.manage import-profile <path>`。
 2. 確認 Ollama 可連線且已 pull 好設定的模型：執行 `ollama list`（模型名稱見 `.env` 的 `OLLAMA_MODEL`）。
 3. 執行：`python -m pipeline.run --pet-id <pet_id> [--voice-sample <voice_sample.wav>] [--music-track <music_track>] --style <style> --duration <duration>`
-4. 回報最終輸出路徑（`storage/output/<pet_id>/<pet_id>_<style>_<duration>s.mp4`）、`storage/output/<pet_id>/scripts/` 下產生的三種腳本風格、`python -m pipeline.manage show-pet <pet_id>` 可查到的這次生成紀錄，以及原文呈現任何 ffmpeg／TTS／Ollama／DB 的錯誤訊息，不要摘要帶過。
+4. 回報最終輸出路徑（`storage/output/<pet_id>/gen_<token>/<pet_id>_<style>_<duration>s.mp4`）、`storage/output/<pet_id>/scripts/` 下產生的三種腳本風格、印出的 Job id、`python -m pipeline.manage show-pet <pet_id>` 可查到的這次生成紀錄，以及原文呈現任何 ffmpeg／TTS／Ollama／DB 的錯誤訊息，不要摘要帶過。
+
+只想改某個鏡頭而不整支重新生成時，用 Job id 呼叫 `python -m pipeline.regenerate <job_id> <scene_id> [--visual-source <asset_id>] [--subtitle <text>] [--narration <text>] [--voice-sample ...] [--music-track ...]`，不會重跑 LLM，只 patch 指定鏡頭後重新渲染，並留一筆 `parent_job_id` 指回原始 job 的新紀錄（原本的輸出檔案不會被覆蓋）。
