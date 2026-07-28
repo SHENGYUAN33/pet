@@ -121,8 +121,8 @@
 ## 常用指令
 
 ```bash
-# 環境設定
-python -m venv .venv && source .venv/Scripts/activate   # Windows Git Bash
+# 環境設定：這個專案有自己的 .venv（見下方「開發環境」），每次開新的終端機都要先啟用
+source .venv/Scripts/activate   # Windows Git Bash；已建過就不用重跑 python -m venv
 pip install -e ".[dev]"
 cp .env.example .env   # 依需要調整 OLLAMA_MODEL / XTTS_MODEL_NAME / DATABASE_URL
 
@@ -164,9 +164,10 @@ python -m pipeline.regenerate <job_id> <scene_id> --animate --video-provider svd
 
 # 簡易 FastAPI + 前端（無建置流程的純 HTML/JS，不是最終目標的 React/Next.js）
 pip install -e ".[web]"
-python -m uvicorn webapp.main:app --reload   # 開 http://localhost:8000
-# 用 "python -m uvicorn"，不要直接打 "uvicorn"：這台機器 PATH 上可能有其他 Python
-# 安裝的 uvicorn.exe，會用錯環境（找不到 psycopg 等套件）
+uvicorn webapp.main:app --reload   # 開 http://localhost:8000（.venv 啟用後裸指令就會抓對環境）
 ```
+
+### 開發環境（.venv，不要裝進全域 Python）
+這台機器上還有另一個獨立的 Python 3.12 安裝，PATH 上排在前面。一開始這個專案曾經誤裝進 miniconda 的 **base 全域環境**，導致裸打 `uvicorn`／`pytest` 等指令會抓到錯的 Python、找不到 `psycopg` 等套件。已改成專案自己的 `.venv`（`python -m venv .venv`，套件都裝在裡面）解決——**每次開新終端機工作前一定要先 `source .venv/Scripts/activate`**，啟用後裸指令（`python`、`pip`、`pytest`、`ruff`、`uvicorn`）都會正確指向 `.venv` 而不是全域環境或那個 Python 3.12 安裝。`.venv/` 已在 `.gitignore` 排除。
 
 素材放置慣例：`storage/assets/<pet_id>/`（原始照片/影片/語音樣本，對應 Profile 的 `media.assets[].url` 檔名）、`storage/output/<pet_id>/gen_<token>/`（每次生成/重生獨立的輸出子資料夾，含三種風格腳本 JSON、各鏡頭 clip、最終影片）。這兩個資料夾內容都被 `.gitignore` 排除，不會進版控。`storage/profiles/*.json` 是匯入資料庫用的格式範本，實際運作時 pipeline 讀的是資料庫，不是這個資料夾。
