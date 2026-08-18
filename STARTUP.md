@@ -10,6 +10,23 @@
 | Ollama | 本機 LLM（腳本生成） | 通常安裝後會常駐在背景，開機自動啟動 |
 | Python `.venv` | 專案依賴（FastAPI/SQLAlchemy/diffusers 等都裝在裡面） | 每個新終端機視窗都要手動啟用 |
 | `uvicorn` (FastAPI) | 網頁介面的後端伺服器 | `.venv` 啟用後執行 `uvicorn webapp.main:app --reload` |
+| ComfyUI 伺服器 | Wan2.2 圖生影片（`--video-provider wan` 才需要，SVD/CogVideoX 不用） | 見下方「啟動 ComfyUI（Wan2.2 用）」 |
+
+---
+
+## 啟動 ComfyUI（只有要用 `--video-provider wan` 時才需要）
+
+Wan2.2 走的是獨立的 ComfyUI 伺服器（`vendor/comfyui/`，有自己的 `.venv`，不是專案主要的 `.venv`），要另開一個終端機視窗常駐執行：
+
+```powershell
+cd C:\Users\tkums\OneDrive\桌面\dogcat\vendor\comfyui
+.venv\Scripts\Activate.ps1
+python main.py --listen 127.0.0.1 --port 8188
+```
+
+看到 `To see the GUI go to: http://127.0.0.1:8188` 就代表啟動成功，**這個視窗要保持開著**。`providers/video/wan_provider.py` 會直接呼叫這個伺服器的 API，沒開的話 `--video-provider wan` 會直接報錯提示你先啟動。
+
+實測數字（RTX 5070 Ti 16GB VRAM）：一顆鏡頭（約 5 秒、20 步取樣）大概 **8 分鐘**（含模型載入），VRAM 用量約 11GB。這是 SVD/CogVideoX 之外唯一「動作品質好、速度也能接受」的選項——細節跟為什麼選這條路（而不是 diffusers 或 Wan 官方 `generate.py`）見 `pipeline/config.py` 的 `WAN_*` 註解區塊。
 
 ---
 

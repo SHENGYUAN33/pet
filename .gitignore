@@ -36,6 +36,10 @@ tmp/
 # Claude Code local overrides
 .claude/settings.local.json
 
+# Wan2.2 official inference repo (cloned, not vendored in git — has its own
+# isolated venv + downloaded checkpoint, see providers/video/wan_provider.py)
+vendor/
+
 # OS / editor
 .DS_Store
 Thumbs.db

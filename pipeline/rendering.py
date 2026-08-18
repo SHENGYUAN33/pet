@@ -45,6 +45,7 @@ def render_script(
     music_track: str | None = None,
     animate_scenes: set[int] | None = None,
     video_provider: str = "svd",
+    animate_prompt: str | None = None,
 ) -> Path:
     """Render a single already-selected script into a final MP4 inside
     work_dir: narration/silence per scene, per-scene video clips (real
@@ -57,7 +58,12 @@ def render_script(
     animate_scenes (docs/architecture.md §5 strategy B): scene_ids whose
     photo source should be animated via an open-source Image-to-Video model
     instead of Ken Burns — only meaningful for photo-sourced scenes, and
-    only instantiates the (heavy) video_provider once, not per scene."""
+    only instantiates the (heavy) video_provider once, not per scene.
+    animate_prompt is optional motion guidance passed to every animated
+    scene for prompt-conditioned providers (CogVideoX, Wan); ignored by
+    providers that aren't text-conditioned (SVD). A single shared prompt
+    rather than a per-scene mapping, since callers only ever animate one
+    scene at a time today (pipeline.regen.regenerate_scene)."""
     work_dir.mkdir(parents=True, exist_ok=True)
     animate_scenes = animate_scenes or set()
 
@@ -80,7 +86,11 @@ def render_script(
         if scene["scene_id"] in animate_scenes and visual_path.suffix.lower() in PHOTO_EXTENSIONS:
             i2v_path = work_dir / f"scene_{scene['scene_id']}_i2v.mp4"
             animate_photo(
-                str(visual_path), i2v_provider, duration=duration, output_path=str(i2v_path)
+                str(visual_path),
+                i2v_provider,
+                duration=duration,
+                output_path=str(i2v_path),
+                prompt=animate_prompt,
             )
             # build_scene_clip below treats any non-photo-suffix input as
             # real footage (loop-if-short + crop, see pipeline/editing.py),

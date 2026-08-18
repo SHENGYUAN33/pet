@@ -29,12 +29,19 @@ class CogVideoXProvider(VideoGenerationProvider):
             self._pipe.vae.enable_tiling()
         return self._pipe
 
-    def animate_image(self, image_path: str, *, duration_seconds: float, output_path: str) -> str:
+    def animate_image(
+        self,
+        image_path: str,
+        *,
+        duration_seconds: float,
+        output_path: str,
+        prompt: str | None = None,
+    ) -> str:
         from diffusers.utils import export_to_video
         from PIL import Image
 
         pipe = self._load()
         image = Image.open(image_path).convert("RGB")
-        frames = pipe(image=image, prompt=config.COGVIDEOX_DEFAULT_PROMPT).frames[0]
+        frames = pipe(image=image, prompt=prompt or config.COGVIDEOX_DEFAULT_PROMPT).frames[0]
         export_to_video(frames, output_path, fps=8)
         return output_path

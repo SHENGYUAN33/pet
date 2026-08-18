@@ -41,8 +41,14 @@ def main() -> None:
     parser.add_argument(
         "--video-provider",
         default="svd",
-        choices=["svd", "cogvideox"],
+        choices=["svd", "cogvideox", "wan"],
         help="Which open-source I2V model to use with --animate (default: svd)",
+    )
+    parser.add_argument(
+        "--prompt",
+        default=None,
+        help="Motion guidance for the animated scene, e.g. '貓輕輕搖尾巴、抬頭看鏡頭' "
+        "(only affects prompt-conditioned providers: cogvideox, wan; ignored by svd)",
     )
     args = parser.parse_args()
 
@@ -56,6 +62,7 @@ def main() -> None:
         music_track=args.music_track,
         animate=args.animate,
         video_provider=args.video_provider,
+        animate_prompt=args.prompt,
     )
     print(f"New job id: {new_job_id} (parent: {args.job_id})")
     print(f"Done: {output_path}")

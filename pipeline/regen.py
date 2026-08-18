@@ -45,6 +45,7 @@ def regenerate_scene(
     music_track: str | None = None,
     animate: bool = False,
     video_provider: str = "svd",
+    animate_prompt: str | None = None,
 ) -> tuple[str, int]:
     """Re-render a whole video from job_id's script with one scene patched,
     without re-running script generation (the LLM step) — the actually
@@ -90,6 +91,7 @@ def regenerate_scene(
         music_track=music_track,
         animate_scenes={scene_id} if animate else None,
         video_provider=video_provider,
+        animate_prompt=animate_prompt,
     )
 
     new_job_id = record_generation_job(

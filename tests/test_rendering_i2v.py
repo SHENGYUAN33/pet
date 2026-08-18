@@ -21,7 +21,14 @@ class FakeVideoProvider(VideoGenerationProvider):
     (does it call the provider, feed the output into build_scene_clip,
     produce the right final duration) — not generation quality."""
 
-    def animate_image(self, image_path: str, *, duration_seconds: float, output_path: str) -> str:
+    def animate_image(
+        self,
+        image_path: str,
+        *,
+        duration_seconds: float,
+        output_path: str,
+        prompt: str | None = None,
+    ) -> str:
         subprocess.run(
             [
                 "ffmpeg",

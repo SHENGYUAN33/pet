@@ -14,20 +14,43 @@ background task queue, deliberately out of scope for this slice.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
-from pipeline.pet_repo import get_generation_job, get_pet, list_generation_jobs, list_pets
+from pipeline import config
+from pipeline.pet_repo import get_generation_job, get_pet, list_generation_jobs, list_pets, save_pet
+from pipeline.profile import PetProfile
 from pipeline.regen import regenerate_scene
 from pipeline.run import generate_video
 
 app = FastAPI(title="Pet Adoption Video — Review Tool")
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+class ImportPathRequest(BaseModel):
+    path: str
+
+
+def _resolve_profile_path(raw_path: str) -> Path:
+    """Restrict imports to storage/profiles/ so this endpoint can't be used to
+    read arbitrary files off the host filesystem (raw_path is user-controlled
+    free text from the web form)."""
+    candidate = (config.PROFILES_DIR / raw_path).resolve()
+    profiles_dir = config.PROFILES_DIR.resolve()
+    if profiles_dir not in candidate.parents and candidate != profiles_dir:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Path must be inside {profiles_dir} — got {raw_path!r}",
+        )
+    if not candidate.is_file():
+        raise HTTPException(status_code=404, detail=f"File not found: {candidate}")
+    return candidate
 
 
 class GenerateRequest(BaseModel):
@@ -37,6 +60,7 @@ class GenerateRequest(BaseModel):
     music_track: str | None = None
     animate_scenes: list[int] | None = None
     video_provider: str = "svd"
+    animate_prompt: str | None = None
 
 
 class RegenerateSceneRequest(BaseModel):
@@ -48,6 +72,7 @@ class RegenerateSceneRequest(BaseModel):
     music_track: str | None = None
     animate: bool = False
     video_provider: str = "svd"
+    animate_prompt: str | None = None
 
 
 @app.get("/api/pets")
@@ -66,6 +91,28 @@ def api_get_pet(pet_id: str):
     }
 
 
+@app.post("/api/pets/import-path")
+def api_import_by_path(req: ImportPathRequest):
+    resolved = _resolve_profile_path(req.path)
+    try:
+        profile = PetProfile.load(resolved)
+    except (json.JSONDecodeError, ValidationError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid Pet Profile: {e}") from e
+    save_pet(profile)
+    return {"pet_id": profile.pet_id, "name": profile.name}
+
+
+@app.put("/api/pets/{pet_id}/profile")
+def api_save_profile(pet_id: str, profile: PetProfile):
+    if profile.pet_id != pet_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"pet_id in URL ({pet_id!r}) must match profile.pet_id ({profile.pet_id!r})",
+        )
+    save_pet(profile)
+    return {"pet_id": profile.pet_id, "name": profile.name}
+
+
 @app.post("/api/pets/{pet_id}/generate")
 def api_generate(pet_id: str, req: GenerateRequest):
     try:
@@ -77,6 +124,7 @@ def api_generate(pet_id: str, req: GenerateRequest):
             duration=req.duration,
             animate_scenes=set(req.animate_scenes) if req.animate_scenes else None,
             video_provider=req.video_provider,
+            animate_prompt=req.animate_prompt,
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
@@ -96,6 +144,7 @@ def api_regenerate_scene(job_id: int, req: RegenerateSceneRequest):
             music_track=req.music_track,
             animate=req.animate,
             video_provider=req.video_provider,
+            animate_prompt=req.animate_prompt,
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e

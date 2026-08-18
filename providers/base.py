@@ -31,6 +31,16 @@ class VideoGenerationProvider(ABC):
     duration."""
 
     @abstractmethod
-    def animate_image(self, image_path: str, *, duration_seconds: float, output_path: str) -> str:
+    def animate_image(
+        self,
+        image_path: str,
+        *,
+        duration_seconds: float,
+        output_path: str,
+        prompt: str | None = None,
+    ) -> str:
         """Animate a still image into a short video clip at output_path,
-        return the path."""
+        return the path. prompt is optional per-call motion guidance (e.g.
+        "貓輕輕搖尾巴、抬頭看鏡頭") — providers that aren't text-conditioned
+        (SVD) ignore it; prompt-aware providers (CogVideoX, Wan) use it to
+        steer subject motion instead of falling back to a fixed default."""

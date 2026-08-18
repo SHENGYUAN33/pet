@@ -25,7 +25,12 @@ web = [
 # torch needs a CUDA-matched wheel, not a plain `pip install torch` — for a
 # Blackwell (RTX 50-series) GPU that means the cu128 index, e.g.:
 #   pip install torch --index-url https://download.pytorch.org/whl/cu128
-# Install that first, then `pip install -e ".[i2v]"` for the rest.
+# Install torch first, then `pip install -e ".[i2v]"` for the rest. This
+# covers SVD/CogVideoX only — Wan2.2 runs via its own official script in a
+# separate clone+venv (vendor/wan2.2/, gitignored) instead of through this
+# project's diffusers install, because its requirements.txt pins numpy<2 and
+# transformers<=4.51.3, both older than what's needed here; see
+# providers/video/wan_provider.py's docstring for the full reasoning.
 i2v = [
     "diffusers>=0.30",
     "transformers>=4.44",
@@ -37,6 +42,14 @@ i2v = [
 
 [tool.ruff]
 line-length = 100
+
+[tool.pytest.ini_options]
+# Restrict discovery to this project's own tests — without this, pytest also
+# tries to collect vendor/comfyui/ and vendor/wan2.2/'s own bundled test
+# suites (different dependencies, different venvs entirely), which fails at
+# collection time. ruff doesn't need the same guard: it respects .gitignore
+# by default, and vendor/ is gitignored.
+testpaths = ["tests"]
 
 [build-system]
 requires = ["setuptools>=68"]

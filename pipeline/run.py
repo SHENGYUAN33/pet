@@ -22,6 +22,7 @@ def generate_video(
     duration: int = 30,
     animate_scenes: set[int] | None = None,
     video_provider: str = "svd",
+    animate_prompt: str | None = None,
 ) -> tuple[str, int]:
     """voice_sample=None runs without narration (silent placeholder audio
     per scene) — useful for testing script generation and video assembly
@@ -79,6 +80,7 @@ def generate_video(
         music_track=music_track,
         animate_scenes=animate_scenes,
         video_provider=video_provider,
+        animate_prompt=animate_prompt,
     )
 
     job_id = record_generation_job(
@@ -122,8 +124,14 @@ def main():
     parser.add_argument(
         "--video-provider",
         default="svd",
-        choices=["svd", "cogvideox"],
+        choices=["svd", "cogvideox", "wan"],
         help="Which open-source I2V model to use with --animate-scenes (default: svd)",
+    )
+    parser.add_argument(
+        "--prompt",
+        default=None,
+        help="Motion guidance for animated scenes, e.g. '貓輕輕搖尾巴、抬頭看鏡頭' "
+        "(only affects prompt-conditioned providers: cogvideox, wan; ignored by svd)",
     )
     args = parser.parse_args()
 
@@ -139,6 +147,7 @@ def main():
         duration=args.duration,
         animate_scenes=animate_scenes,
         video_provider=args.video_provider,
+        animate_prompt=args.prompt,
     )
     print(f"Job id: {job_id}")
     print(f"Done: {output_path}")

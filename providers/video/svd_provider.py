@@ -28,7 +28,17 @@ class SVDProvider(VideoGenerationProvider):
             self._pipe.enable_model_cpu_offload()
         return self._pipe
 
-    def animate_image(self, image_path: str, *, duration_seconds: float, output_path: str) -> str:
+    def animate_image(
+        self,
+        image_path: str,
+        *,
+        duration_seconds: float,
+        output_path: str,
+        prompt: str | None = None,
+    ) -> str:
+        # SVD has no text encoder — it's conditioned only on the input image,
+        # so prompt is accepted (interface parity with CogVideoX/Wan) but has
+        # no effect here.
         from diffusers.utils import export_to_video
         from PIL import Image
 
