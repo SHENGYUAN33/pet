@@ -151,6 +151,17 @@ def api_regenerate_scene(job_id: int, req: RegenerateSceneRequest):
     return {"output_path": output_path, "job_id": new_job_id}
 
 
+@app.get("/api/jobs/{job_id}")
+def api_get_job(job_id: int):
+    """Full job record including script_json, so the review UI can list a
+    job's scenes (id / purpose / subtitle) for the 單鏡頭重生 panel instead of
+    making the reviewer type a raw scene id."""
+    job = get_generation_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"No generation job found with id {job_id}")
+    return job
+
+
 @app.get("/api/jobs/{job_id}/video")
 def api_get_job_video(job_id: int):
     job = get_generation_job(job_id)

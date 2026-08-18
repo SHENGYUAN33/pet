@@ -168,3 +168,39 @@ def test_import_path_loads_and_saves_pet(client):
     finally:
         profile_path.unlink(missing_ok=True)
 
+
+def test_get_unknown_job_returns_404(client):
+    response = client.get("/api/jobs/999999999")
+    assert response.status_code == 404
+
+
+def test_get_job_returns_script_scenes(client):
+    """The review UI lists a job's scenes so the reviewer can pick one to
+    regenerate instead of typing a raw scene id."""
+    from pipeline.pet_repo import record_generation_job, save_pet
+    from pipeline.profile import PetProfile
+
+    save_pet(PetProfile.model_validate(_sample_profile_json()))
+    script = {
+        "pet_id": TEST_PET_ID,
+        "scenes": [
+            {"scene_id": 1, "purpose": "hook", "subtitle": "先別滑走", "narration": "嗨"},
+            {"scene_id": 2, "purpose": "intro", "subtitle": "我是測試貓", "narration": "你好"},
+        ],
+    }
+    job_id = record_generation_job(
+        TEST_PET_ID,
+        style="cute",
+        duration=30,
+        output_path="storage/output/does-not-need-to-exist.mp4",
+        disclosure_missing=[],
+        structure_issues=[],
+        script_json=script,
+    )
+
+    response = client.get(f"/api/jobs/{job_id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == job_id
+    assert [s["scene_id"] for s in body["script_json"]["scenes"]] == [1, 2]

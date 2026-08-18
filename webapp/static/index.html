@@ -2,174 +2,991 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8" />
-<title>寵物領養影片 — 審核工具</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>寵物領養影片 — 審核工作台</title>
 <style>
-  body { font-family: -apple-system, "Microsoft JhengHei", sans-serif; margin: 0; display: flex; height: 100vh; }
-  aside { width: 220px; border-right: 1px solid #ccc; overflow-y: auto; padding: 12px; box-sizing: border-box; }
-  main { flex: 1; display: flex; overflow: hidden; }
-  section.center { flex: 2; padding: 16px; overflow-y: auto; }
-  section.side { flex: 1; padding: 16px; border-left: 1px solid #ccc; overflow-y: auto; box-sizing: border-box; }
-  h2 { margin-top: 0; }
-  .pet-item { padding: 8px; cursor: pointer; border-radius: 4px; }
-  .pet-item:hover, .pet-item.active { background: #eee; }
-  video { width: 100%; max-width: 480px; background: #000; }
-  form { display: flex; flex-direction: column; gap: 8px; margin-bottom: 24px; }
-  label { font-size: 0.85em; color: #444; }
-  input, select { padding: 4px; }
-  button { padding: 6px 12px; cursor: pointer; }
-  .job { border: 1px solid #ddd; border-radius: 4px; padding: 8px; margin-bottom: 8px; font-size: 0.85em; }
-  .warning { color: #b30000; }
-  pre { white-space: pre-wrap; font-size: 0.8em; background: #f7f7f7; padding: 8px; }
+/* ---------- design tokens ---------- */
+:root {
+  --bg: #f4f5f8;
+  --surface: #ffffff;
+  --surface-2: #f8f9fb;
+  --border: #e3e6ec;
+  --border-strong: #cfd4de;
+  --text: #1c2130;
+  --text-dim: #626b7e;
+  --text-faint: #8b94a6;
+  --accent: #4f46e5;
+  --accent-soft: #eef0ff;
+  --accent-text: #ffffff;
+  --danger: #c62828;
+  --danger-soft: #fdecec;
+  --warn: #a86300;
+  --warn-soft: #fff5e0;
+  --ok: #1c7a4d;
+  --ok-soft: #e6f6ee;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --shadow: 0 1px 2px rgba(16, 20, 32, .05), 0 6px 18px rgba(16, 20, 32, .06);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12141a;
+    --surface: #1a1d25;
+    --surface-2: #21252f;
+    --border: #2b3040;
+    --border-strong: #3a4152;
+    --text: #e8ebf2;
+    --text-dim: #a3abbd;
+    --text-faint: #78819a;
+    --accent: #7c76f5;
+    --accent-soft: #262a48;
+    --danger: #ff8a8a;
+    --danger-soft: #3a2226;
+    --warn: #f0b458;
+    --warn-soft: #372c19;
+    --ok: #6ede9f;
+    --ok-soft: #17301f;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 6px 18px rgba(0, 0, 0, .28);
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft JhengHei", "PingFang TC", sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ---------- top bar ---------- */
+header.topbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 18px;
+  height: 56px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.topbar .brand { font-weight: 650; font-size: 15px; letter-spacing: .2px; }
+.topbar .brand span { color: var(--text-faint); font-weight: 400; margin-left: 8px; font-size: 12.5px; }
+.topbar .spacer { flex: 1; }
+
+/* ---------- layout ---------- */
+.layout { flex: 1; display: flex; min-height: 0; }
+aside {
+  width: 264px;
+  flex: 0 0 264px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 14px;
+}
+main { flex: 1; display: flex; min-width: 0; }
+.stage { flex: 1.65; min-width: 0; overflow-y: auto; padding: 20px 22px 60px; }
+.panel {
+  flex: 1;
+  max-width: 420px;
+  min-width: 330px;
+  overflow-y: auto;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  padding: 0 0 60px;
+}
+
+/* ---------- typography ---------- */
+h1, h2, h3, h4 { margin: 0; font-weight: 650; }
+.section-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin: 0 0 10px;
+}
+.hint { font-size: 12px; color: var(--text-faint); line-height: 1.5; }
+
+/* ---------- cards ---------- */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+/* ---------- pet list ---------- */
+.search { width: 100%; margin-bottom: 10px; }
+.pet-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  border: 1px solid transparent;
+  margin-bottom: 2px;
+}
+.pet-item:hover { background: var(--surface-2); }
+.pet-item.active { background: var(--accent-soft); border-color: var(--accent); }
+.pet-item .avatar {
+  width: 32px; height: 32px; flex: 0 0 32px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: 16px;
+}
+.pet-item.active .avatar { background: var(--surface); }
+.pet-item .meta { min-width: 0; }
+.pet-item .nm { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pet-item .id { font-size: 11.5px; color: var(--text-faint); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; }
+
+/* ---------- badges / chips ---------- */
+.badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+.badge.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+.badge.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.badge.danger { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
+.badge.accent { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.badge-row { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* ---------- forms ---------- */
+.field { display: block; margin-bottom: 12px; }
+.field > .lbl {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-bottom: 5px;
+}
+.field .sub { display: block; font-weight: 400; color: var(--text-faint); font-size: 11.5px; margin-top: 2px; }
+input[type="text"], input[type="number"], input[type="search"], select, textarea {
+  width: 100%;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  outline: none;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+input::placeholder { color: var(--text-faint); }
+.check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; color: var(--text-dim); margin-bottom: 12px; }
+.check input { margin-top: 3px; }
+
+button {
+  font: inherit;
+  font-weight: 600;
+  padding: 9px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+button:hover:not(:disabled) { background: var(--surface-2); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  width: 100%;
+}
+button.primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--accent); }
+button.ghost { border-style: dashed; color: var(--text-dim); width: 100%; }
+button.tiny { padding: 4px 9px; font-size: 12px; font-weight: 600; }
+
+details.adv { margin-bottom: 12px; }
+details.adv > summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+  padding: 7px 0;
+  list-style: none;
+  user-select: none;
+}
+details.adv > summary::-webkit-details-marker { display: none; }
+details.adv > summary::before { content: "\25B8  "; color: var(--text-faint); }
+details.adv[open] > summary::before { content: "\25BE  "; }
+details.adv > .adv-body {
+  padding: 12px 12px 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+/* ---------- tabs ---------- */
+.tabs { display: flex; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); z-index: 3; }
+.tab {
+  flex: 1;
+  padding: 14px 8px;
+  text-align: center;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-dim);
+  cursor: pointer;
+  border: none;
+  background: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+}
+.tab:hover { color: var(--text); background: var(--surface-2); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab-body { padding: 16px; display: none; }
+.tab-body.active { display: block; }
+
+/* ---------- video ---------- */
+.video-wrap { background: #000; border-radius: var(--radius); overflow: hidden; line-height: 0; }
+video { width: 100%; max-height: 46vh; background: #000; display: block; }
+.video-caption { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; font-size: 12.5px; color: var(--text-dim); }
+
+/* ---------- job cards ---------- */
+.job {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 11px 13px;
+  margin-bottom: 9px;
+  background: var(--surface);
+  cursor: pointer;
+}
+.job:hover { border-color: var(--border-strong); background: var(--surface-2); }
+.job.playing { border-color: var(--accent); background: var(--accent-soft); }
+.job .job-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.job .job-id { font-weight: 700; }
+.job .job-time { color: var(--text-faint); font-size: 12px; margin-left: auto; }
+.job .job-actions { display: flex; gap: 6px; margin-top: 9px; }
+.issue {
+  margin-top: 8px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.issue.bad { background: var(--danger-soft); color: var(--danger); }
+
+/* ---------- scene picker ---------- */
+.scene {
+  display: flex; gap: 9px; align-items: flex-start;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 9px 10px;
+  margin-bottom: 7px;
+  cursor: pointer;
+  background: var(--surface);
+}
+.scene:hover { background: var(--surface-2); }
+.scene.selected { border-color: var(--accent); background: var(--accent-soft); }
+.scene .no {
+  flex: 0 0 26px; height: 26px;
+  display: grid; place-items: center;
+  border-radius: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: 12px; font-weight: 700;
+}
+.scene.selected .no { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.scene .txt { min-width: 0; }
+.scene .sub-line { font-size: 13px; }
+.scene .m { font-size: 11.5px; color: var(--text-faint); }
+
+/* ---------- profile editor ---------- */
+#profile-editor {
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  min-height: 340px;
+  resize: vertical;
+  background: var(--surface-2);
+}
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* ---------- empty state ---------- */
+.empty {
+  display: grid;
+  place-items: center;
+  text-align: center;
+  min-height: 55vh;
+  color: var(--text-faint);
+  gap: 6px;
+}
+.empty .big { font-size: 44px; }
+.empty h3 { color: var(--text-dim); font-size: 15px; }
+
+/* ---------- toasts + busy overlay ---------- */
+#toast-host {
+  position: fixed; right: 18px; bottom: 18px; z-index: 50;
+  display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
+}
+.toast {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  padding: 10px 14px;
+  max-width: 380px;
+  font-size: 13px;
+}
+.toast.err { border-left-color: var(--danger); color: var(--danger); }
+.toast.ok { border-left-color: var(--ok); }
+
+#busy {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(12, 14, 20, .55);
+  display: none;
+  place-items: center;
+}
+#busy.on { display: grid; }
+#busy .box {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 26px 34px;
+  text-align: center;
+  box-shadow: var(--shadow);
+  min-width: 280px;
+}
+.spinner {
+  width: 30px; height: 30px; margin: 0 auto 12px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+#busy .what { font-weight: 650; }
+#busy .elapsed { color: var(--text-faint); font-size: 12.5px; margin-top: 4px; }
+
+.status-line { font-size: 12.5px; margin-top: 8px; color: var(--text-dim); min-height: 18px; }
+.status-line.err { color: var(--danger); }
+.status-line.ok { color: var(--ok); }
 </style>
 </head>
 <body>
 
-<aside>
-  <h3>寵物</h3>
-  <div id="pet-list">載入中…</div>
-</aside>
+<header class="topbar">
+  <div class="brand">🐾 寵物領養影片工作台<span>Pet Adoption Video · 審核工具</span></div>
+  <div class="spacer"></div>
+  <div id="current-chip" class="badge accent" hidden></div>
+</header>
 
-<main>
-  <section class="center">
-    <h2 id="pet-title">請選擇一隻寵物</h2>
-    <video id="video-player" controls></video>
-    <h3>生成歷程</h3>
-    <div id="job-list"></div>
-  </section>
+<div class="layout">
 
-  <section class="side">
-    <h3>產生新影片</h3>
-    <form id="generate-form">
-      <label>風格
-        <select name="style">
-          <option value="cute">萌系 cute</option>
-          <option value="warm_story">溫暖故事 warm_story</option>
-          <option value="contrast_humor">反差幽默 contrast_humor</option>
-        </select>
-      </label>
-      <label>時長（秒）<input type="number" name="duration" value="30" /></label>
-      <label>語音參考檔路徑（選填）<input type="text" name="voice_sample" /></label>
-      <label>背景音樂路徑（選填）<input type="text" name="music_track" /></label>
-      <button type="submit">產生影片（會等到完成，可能要 10-60 秒）</button>
-    </form>
+  <aside>
+    <p class="section-label">寵物清單</p>
+    <input class="search" type="search" id="pet-search" placeholder="搜尋名字或 ID…" />
+    <div id="pet-list" class="hint">載入中…</div>
 
-    <h3>單鏡頭重生</h3>
-    <form id="regenerate-form">
-      <label>Job id<input type="number" name="job_id" required /></label>
-      <label>Scene id<input type="number" name="scene_id" required /></label>
-      <label>新素材 asset_id（選填）<input type="text" name="visual_source" /></label>
-      <label>新字幕（選填）<input type="text" name="subtitle" /></label>
-      <label>新旁白（選填）<input type="text" name="narration" /></label>
-      <label>語音參考檔路徑（選填）<input type="text" name="voice_sample" /></label>
-      <label>背景音樂路徑（選填）<input type="text" name="music_track" /></label>
-      <label><input type="checkbox" name="animate" /> 用 AI 動態化（Image-to-Video）取代 Ken Burns</label>
-      <label>影片生成模型
-        <select name="video_provider">
-          <option value="svd">SVD</option>
-          <option value="cogvideox">CogVideoX</option>
-        </select>
-      </label>
-      <button type="submit">重新生成這個鏡頭</button>
-    </form>
+    <div style="margin-top:14px">
+      <button type="button" class="ghost" id="new-profile-btn">＋ 新增寵物</button>
+    </div>
 
-    <div id="status"></div>
-  </section>
-</main>
+    <details class="adv" style="margin-top:14px">
+      <summary>從檔案路徑匯入 Profile</summary>
+      <div class="adv-body">
+        <form id="import-form">
+          <label class="field">
+            <span class="lbl">檔案路徑<span class="sub">相對於 storage/profiles/</span></span>
+            <input type="text" name="path" placeholder="PET-2026-002.json" required />
+          </label>
+          <button type="submit" class="primary">匯入</button>
+        </form>
+        <div id="import-status" class="status-line"></div>
+      </div>
+    </details>
+  </aside>
+
+  <main>
+    <section class="stage">
+      <div id="empty-state" class="empty">
+        <div class="big">🐶🐱</div>
+        <h3>從左側選一隻寵物開始</h3>
+        <p class="hint">選好之後可以在右側產生新影片，<br />或挑一個既有版本重生單一鏡頭。</p>
+      </div>
+
+      <div id="pet-view" hidden>
+        <div class="card">
+          <h2 id="pet-title">—</h2>
+          <div id="pet-sub" class="hint"></div>
+          <div class="badge-row" id="pet-badges" style="margin-top:10px"></div>
+        </div>
+
+        <div class="card">
+          <p class="section-label">影片預覽</p>
+          <div class="video-wrap"><video id="video-player" controls playsinline></video></div>
+          <div class="video-caption" id="video-caption">尚未有生成結果</div>
+        </div>
+
+        <div class="card">
+          <div class="row" style="justify-content:space-between">
+            <p class="section-label" style="margin:0">生成歷程</p>
+            <span class="hint" id="job-count"></span>
+          </div>
+          <div id="job-list" style="margin-top:10px"></div>
+        </div>
+
+        <details class="adv">
+          <summary>Pet Profile（進階：直接編輯 JSON）</summary>
+          <div class="adv-body">
+            <textarea id="profile-editor" spellcheck="false"></textarea>
+            <div class="row" style="margin:10px 0 4px">
+              <button type="button" class="primary" style="width:auto" id="save-profile-btn">儲存 Profile</button>
+              <span class="hint">會經過 pydantic 驗證，pet_id 相同即覆蓋</span>
+            </div>
+            <div id="profile-status" class="status-line"></div>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="tabs">
+        <button class="tab active" data-tab="gen">✨ 產生新影片</button>
+        <button class="tab" data-tab="regen">🎬 單鏡頭重生</button>
+      </div>
+
+      <div class="tab-body active" id="tab-gen">
+        <form id="generate-form">
+          <label class="field">
+            <span class="lbl">腳本風格</span>
+            <select name="style">
+              <option value="cute">萌系 cute</option>
+              <option value="warm_story">溫暖故事 warm_story</option>
+              <option value="contrast_humor">反差幽默 contrast_humor</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="lbl">影片長度<span class="sub">秒，一般為 30 或 15</span></span>
+            <input type="number" name="duration" value="30" min="5" max="120" />
+          </label>
+
+          <details class="adv">
+            <summary>音訊素材（選填）</summary>
+            <div class="adv-body">
+              <label class="field">
+                <span class="lbl">語音參考檔<span class="sub">XTTS voice cloning 用的 wav 路徑</span></span>
+                <input type="text" name="voice_sample" placeholder="storage/assets/PET-.../voice_ref.wav" />
+              </label>
+              <label class="field">
+                <span class="lbl">背景音樂</span>
+                <input type="text" name="music_track" placeholder="storage/assets/PET-.../music.mp3" />
+              </label>
+            </div>
+          </details>
+
+          <details class="adv">
+            <summary>AI 動態化 Image-to-Video（選填）</summary>
+            <div class="adv-body">
+              <p class="hint" style="margin-top:0">預設走真實素材剪輯＋照片 Ken Burns；只有填了鏡頭編號才會呼叫 I2V 模型（需要 CUDA GPU，會明顯變慢）。</p>
+              <label class="field">
+                <span class="lbl">要動態化的鏡頭<span class="sub">逗號分隔 scene id，例如 2,4</span></span>
+                <input type="text" name="animate_scenes" placeholder="2,4" />
+              </label>
+              <label class="field">
+                <span class="lbl">影片生成模型</span>
+                <select name="video_provider">
+                  <option value="svd">SVD（已實測可用）</option>
+                  <option value="cogvideox">CogVideoX-5b-I2V</option>
+                  <option value="wan">Wan2.2</option>
+                </select>
+              </label>
+              <label class="field">
+                <span class="lbl">動作描述 prompt<span class="sub">只有 CogVideoX / Wan2.2 支援</span></span>
+                <input type="text" name="animate_prompt" placeholder="貓輕輕搖尾巴、抬頭看鏡頭" />
+              </label>
+            </div>
+          </details>
+
+          <button type="submit" class="primary">產生影片</button>
+          <p class="hint" style="margin-top:8px">同步執行，跑完 LLM／TTS／FFmpeg 才會回應，大約 10–60 秒。</p>
+        </form>
+      </div>
+
+      <div class="tab-body" id="tab-regen">
+        <div id="regen-empty" class="hint">請先選一隻寵物，並在「生成歷程」挑一個版本。</div>
+
+        <form id="regenerate-form" hidden>
+          <label class="field">
+            <span class="lbl">要修改的版本</span>
+            <select id="regen-job-select" name="job_id"></select>
+          </label>
+
+          <p class="section-label" style="margin-top:16px">選一個鏡頭</p>
+          <div id="scene-list"></div>
+          <input type="hidden" name="scene_id" />
+
+          <div id="regen-fields" hidden style="margin-top:14px">
+            <label class="field">
+              <span class="lbl">新字幕<span class="sub">留白＝沿用原本內容</span></span>
+              <input type="text" name="subtitle" />
+            </label>
+            <label class="field">
+              <span class="lbl">新旁白<span class="sub">留白＝沿用原本內容；改了會重跑 TTS</span></span>
+              <input type="text" name="narration" />
+            </label>
+
+            <details class="adv">
+              <summary>換素材與音訊（選填）</summary>
+              <div class="adv-body">
+                <label class="field">
+                  <span class="lbl">新素材 asset_id</span>
+                  <input type="text" name="visual_source" placeholder="uploaded_photo_02" />
+                </label>
+                <label class="field">
+                  <span class="lbl">語音參考檔<span class="sub">要比照原生成時再填一次</span></span>
+                  <input type="text" name="voice_sample" />
+                </label>
+                <label class="field">
+                  <span class="lbl">背景音樂<span class="sub">要比照原生成時再填一次</span></span>
+                  <input type="text" name="music_track" />
+                </label>
+              </div>
+            </details>
+
+            <details class="adv">
+              <summary>AI 動態化（選填）</summary>
+              <div class="adv-body">
+                <label class="check">
+                  <input type="checkbox" name="animate" />
+                  <span>用 Image-to-Video 取代 Ken Burns</span>
+                </label>
+                <label class="field">
+                  <span class="lbl">影片生成模型</span>
+                  <select name="video_provider">
+                    <option value="svd">SVD（已實測可用）</option>
+                    <option value="cogvideox">CogVideoX-5b-I2V</option>
+                    <option value="wan">Wan2.2</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span class="lbl">動作描述 prompt<span class="sub">只有 CogVideoX / Wan2.2 支援</span></span>
+                  <input type="text" name="animate_prompt" placeholder="貓輕輕搖尾巴、抬頭看鏡頭" />
+                </label>
+              </div>
+            </details>
+
+            <button type="submit" class="primary">重新生成這個鏡頭</button>
+            <p class="hint" style="margin-top:8px">不會重跑 LLM，只 patch 這個鏡頭後重新渲染，並存成新的一筆版本（舊版保留）。</p>
+          </div>
+        </form>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="toast-host"></div>
+<div id="busy"><div class="box">
+  <div class="spinner"></div>
+  <div class="what" id="busy-what">處理中…</div>
+  <div class="elapsed" id="busy-elapsed">0 秒</div>
+</div></div>
 
 <script>
-let currentPetId = null;
+const SPECIES_EMOJI = { cat: "🐱", dog: "🐶" };
+const STYLE_LABEL = { cute: "萌系", warm_story: "溫暖故事", contrast_humor: "反差幽默" };
 
-function setStatus(text, isError) {
-  const el = document.getElementById("status");
+let allPets = [];
+let currentPetId = null;
+let currentJobs = [];
+let playingJobId = null;
+let sceneCache = {};
+
+const $ = (id) => document.getElementById(id);
+
+/* ---------- feedback helpers ---------- */
+function toast(text, kind) {
+  const el = document.createElement("div");
+  el.className = "toast" + (kind ? " " + kind : "");
   el.textContent = text;
-  el.className = isError ? "warning" : "";
+  $("toast-host").appendChild(el);
+  setTimeout(() => el.remove(), kind === "err" ? 9000 : 5000);
 }
 
+let busyTimer = null;
+function busy(what) {
+  $("busy-what").textContent = what;
+  $("busy-elapsed").textContent = "0 秒";
+  $("busy").classList.add("on");
+  const started = Date.now();
+  busyTimer = setInterval(() => {
+    $("busy-elapsed").textContent = Math.round((Date.now() - started) / 1000) + " 秒";
+  }, 1000);
+}
+function unbusy() {
+  clearInterval(busyTimer);
+  $("busy").classList.remove("on");
+}
+
+function setLine(id, text, kind) {
+  const el = $(id);
+  el.textContent = text;
+  el.className = "status-line" + (kind ? " " + kind : "");
+}
+
+async function api(url, options) {
+  const res = await fetch(url, options);
+  let data = null;
+  try { data = await res.json(); } catch (e) { /* empty body */ }
+  if (!res.ok) {
+    const detail = data && data.detail !== undefined ? data.detail : res.statusText;
+    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+  }
+  return data;
+}
+
+/* ---------- pets ---------- */
 async function loadPets() {
-  const res = await fetch("/api/pets");
-  const pets = await res.json();
-  const list = document.getElementById("pet-list");
+  try {
+    allPets = await api("/api/pets");
+  } catch (err) {
+    $("pet-list").textContent = "載入失敗：" + err.message;
+    return;
+  }
+  renderPets();
+}
+
+function renderPets() {
+  const q = $("pet-search").value.trim().toLowerCase();
+  const pets = allPets.filter(
+    (p) => !q || (p.name || "").toLowerCase().includes(q) || p.pet_id.toLowerCase().includes(q)
+  );
+  const list = $("pet-list");
   list.innerHTML = "";
+  list.className = "";
+  if (!pets.length) {
+    list.className = "hint";
+    list.textContent = allPets.length ? "沒有符合的寵物" : "資料庫還沒有寵物，先用下方匯入或「新增寵物」。";
+    return;
+  }
   for (const pet of pets) {
     const div = document.createElement("div");
-    div.className = "pet-item";
-    div.textContent = `${pet.name} (${pet.pet_id})`;
+    div.className = "pet-item" + (pet.pet_id === currentPetId ? " active" : "");
+    div.innerHTML =
+      '<div class="avatar">' + (SPECIES_EMOJI[pet.species] || "🐾") + "</div>" +
+      '<div class="meta"><div class="nm"></div><div class="id"></div></div>';
+    div.querySelector(".nm").textContent = pet.name || "(未命名)";
+    div.querySelector(".id").textContent = pet.pet_id;
     div.onclick = () => selectPet(pet.pet_id);
     list.appendChild(div);
   }
 }
 
-async function selectPet(petId) {
-  currentPetId = petId;
-  document.querySelectorAll(".pet-item").forEach(el => el.classList.remove("active"));
-  const res = await fetch(`/api/pets/${petId}`);
-  if (!res.ok) {
-    setStatus(`找不到寵物 ${petId}`, true);
-    return;
-  }
-  const data = await res.json();
-  document.getElementById("pet-title").textContent = `${data.profile.name} (${petId})`;
+function renderPetHeader(profile) {
+  $("pet-title").textContent = profile.name || "(未命名)";
+  $("pet-sub").textContent = profile.pet_id + (profile.location ? " · " + profile.location : "");
 
-  const jobs = data.jobs;
-  const jobList = document.getElementById("job-list");
-  jobList.innerHTML = "";
-  const player = document.getElementById("video-player");
-  if (jobs.length > 0) {
-    player.src = `/api/jobs/${jobs[0].id}/video`;
-  } else {
-    player.removeAttribute("src");
-  }
+  const chip = $("current-chip");
+  chip.hidden = false;
+  chip.textContent = (SPECIES_EMOJI[profile.species] || "🐾") + " " + (profile.name || profile.pet_id);
 
-  for (const job of jobs) {
-    const div = document.createElement("div");
-    div.className = "job";
-    div.innerHTML = `
-      <strong>Job ${job.id}</strong> (${job.style}, ${job.duration}s, ${job.scene_count} 鏡頭)
-      ${job.parent_job_id ? `— 重生自 job ${job.parent_job_id}` : ""}
-      <br><a href="#" data-job="${job.id}">播放這個版本</a>
-      ${job.disclosure_missing.missing_restrictions.length ? `<div class="warning">缺揭露: ${job.disclosure_missing.missing_restrictions.join("、")}</div>` : ""}
-      ${job.structure_issues.issues.length ? `<div class="warning">結構問題: ${job.structure_issues.issues.join("；")}</div>` : ""}
-    `;
-    div.querySelector("a").onclick = (e) => {
-      e.preventDefault();
-      player.src = `/api/jobs/${job.id}/video`;
-      player.play();
-    };
-    jobList.appendChild(div);
+  const badges = [];
+  const add = (text, cls) => badges.push({ text: text, cls: cls || "" });
+  if (profile.breed) add(profile.breed);
+  if (profile.age) add(profile.age);
+  const sex = { male: "♂ 男生", female: "♀ 女生" }[profile.sex];
+  if (sex) add(sex);
+  if (profile.size) add({ small: "小型", medium: "中型", large: "大型" }[profile.size] || profile.size);
+  const h = profile.health_status || {};
+  add((h.vaccinated ? "✓" : "✗") + " 疫苗", h.vaccinated ? "ok" : "warn");
+  add((h.neutered ? "✓" : "✗") + " 絕育", h.neutered ? "ok" : "warn");
+  add((h.microchipped ? "✓" : "✗") + " 晶片", h.microchipped ? "ok" : "warn");
+  const restrictions = (profile.personality_tags || {}).restrictions || [];
+  for (const r of restrictions) add("⚠ " + r, "danger");
+
+  const host = $("pet-badges");
+  host.innerHTML = "";
+  for (const b of badges) {
+    const span = document.createElement("span");
+    span.className = "badge " + b.cls;
+    span.textContent = b.text;
+    host.appendChild(span);
   }
 }
 
-document.getElementById("generate-form").addEventListener("submit", async (e) => {
+async function selectPet(petId, keepPlaying) {
+  let data;
+  try {
+    data = await api("/api/pets/" + encodeURIComponent(petId));
+  } catch (err) {
+    toast("找不到寵物 " + petId + "：" + err.message, "err");
+    return;
+  }
+  currentPetId = petId;
+  sceneCache = {};
+  $("empty-state").hidden = true;
+  $("pet-view").hidden = false;
+  renderPets();
+  renderPetHeader(data.profile);
+
+  $("profile-editor").value = JSON.stringify(data.profile, null, 2);
+  setLine("profile-status", "");
+
+  currentJobs = data.jobs;
+  if (!keepPlaying || !currentJobs.some((j) => j.id === playingJobId)) {
+    playingJobId = currentJobs.length ? currentJobs[0].id : null;
+  }
+  playJob(playingJobId);
+  renderRegenPanel();
+}
+
+/* ---------- jobs ---------- */
+function renderJobs() {
+  const host = $("job-list");
+  host.innerHTML = "";
+  $("job-count").textContent = currentJobs.length ? currentJobs.length + " 個版本" : "";
+  if (!currentJobs.length) {
+    host.className = "hint";
+    host.textContent = "還沒有生成過影片 — 用右側「產生新影片」開始。";
+    return;
+  }
+  host.className = "";
+  for (const job of currentJobs) {
+    const missing = ((job.disclosure_missing || {}).missing_restrictions) || [];
+    const issues = ((job.structure_issues || {}).issues) || [];
+
+    const div = document.createElement("div");
+    div.className = "job" + (job.id === playingJobId ? " playing" : "");
+
+    const top = document.createElement("div");
+    top.className = "job-top";
+    top.innerHTML = [
+      '<span class="job-id">Job ' + job.id + "</span>",
+      '<span class="badge accent">' + (STYLE_LABEL[job.style] || job.style) + "</span>",
+      '<span class="badge">' + job.duration + "s · " + job.scene_count + " 鏡頭</span>",
+      job.parent_job_id ? '<span class="badge">↺ 重生自 ' + job.parent_job_id + "</span>" : "",
+      !missing.length && !issues.length ? '<span class="badge ok">✓ 檢查通過</span>' : "",
+      '<span class="job-time">' + new Date(job.created_at).toLocaleString("zh-TW") + "</span>",
+    ].join("");
+    div.appendChild(top);
+
+    if (missing.length) {
+      const d = document.createElement("div");
+      d.className = "issue bad";
+      d.textContent = "缺少揭露：" + missing.join("、");
+      div.appendChild(d);
+    }
+    if (issues.length) {
+      const d = document.createElement("div");
+      d.className = "issue";
+      d.textContent = "結構問題：" + issues.join("；");
+      div.appendChild(d);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "job-actions";
+    const playBtn = document.createElement("button");
+    playBtn.type = "button";
+    playBtn.className = "tiny";
+    playBtn.textContent = job.id === playingJobId ? "▶ 播放中" : "▶ 播放";
+    playBtn.onclick = (e) => { e.stopPropagation(); playJob(job.id, true); };
+    const regenBtn = document.createElement("button");
+    regenBtn.type = "button";
+    regenBtn.className = "tiny";
+    regenBtn.textContent = "🎬 改這個版本的鏡頭";
+    regenBtn.onclick = (e) => { e.stopPropagation(); openRegenFor(job.id); };
+    actions.append(playBtn, regenBtn);
+    div.appendChild(actions);
+
+    div.onclick = () => playJob(job.id);
+    host.appendChild(div);
+  }
+}
+
+function playJob(jobId, autoplay) {
+  const player = $("video-player");
+  playingJobId = jobId;
+  if (jobId == null) {
+    player.removeAttribute("src");
+    player.load();
+    $("video-caption").textContent = "尚未有生成結果";
+  } else {
+    player.src = "/api/jobs/" + jobId + "/video";
+    const job = currentJobs.find((j) => j.id === jobId);
+    $("video-caption").innerHTML =
+      "正在預覽 <strong>Job " + jobId + "</strong>" +
+      (job ? " · " + (STYLE_LABEL[job.style] || job.style) + " · " + job.duration + " 秒" : "");
+    if (autoplay) player.play().catch(() => {});
+  }
+  renderJobs();
+}
+
+/* ---------- regenerate panel ---------- */
+function renderRegenPanel() {
+  const form = $("regenerate-form");
+  const empty = $("regen-empty");
+  if (!currentPetId || !currentJobs.length) {
+    form.hidden = true;
+    empty.hidden = false;
+    empty.textContent = currentPetId
+      ? "這隻寵物還沒有任何影片版本，先在「產生新影片」跑一次。"
+      : "請先選一隻寵物，並在「生成歷程」挑一個版本。";
+    return;
+  }
+  empty.hidden = true;
+  form.hidden = false;
+
+  const select = $("regen-job-select");
+  const previous = select.value;
+  select.innerHTML = "";
+  for (const job of currentJobs) {
+    const opt = document.createElement("option");
+    opt.value = job.id;
+    opt.textContent =
+      "Job " + job.id + " · " + (STYLE_LABEL[job.style] || job.style) + " · " + job.scene_count + " 鏡頭";
+    select.appendChild(opt);
+  }
+  select.value = currentJobs.some((j) => String(j.id) === previous)
+    ? previous
+    : String(playingJobId != null ? playingJobId : currentJobs[0].id);
+  loadScenes(select.value);
+}
+
+async function loadScenes(jobId) {
+  const host = $("scene-list");
+  $("regen-fields").hidden = true;
+  $("regenerate-form").querySelector('input[name="scene_id"]').value = "";
+  host.innerHTML = '<div class="hint">載入鏡頭中…</div>';
+
+  let scenes = sceneCache[jobId];
+  if (!scenes) {
+    try {
+      const job = await api("/api/jobs/" + jobId);
+      scenes = (job.script_json || {}).scenes || [];
+      sceneCache[jobId] = scenes;
+    } catch (err) {
+      host.innerHTML = "";
+      const d = document.createElement("div");
+      d.className = "status-line err";
+      d.textContent = "讀取鏡頭失敗：" + err.message;
+      host.appendChild(d);
+      return;
+    }
+  }
+
+  host.innerHTML = "";
+  if (!scenes.length) {
+    host.innerHTML = '<div class="hint">這個版本沒有鏡頭資料。</div>';
+    return;
+  }
+  for (const scene of scenes) {
+    const div = document.createElement("div");
+    div.className = "scene";
+    div.innerHTML =
+      '<div class="no"></div><div class="txt"><div class="sub-line"></div><div class="m"></div></div>';
+    div.querySelector(".no").textContent = scene.scene_id;
+    div.querySelector(".sub-line").textContent = scene.subtitle || scene.narration || "(無字幕)";
+    const meta = [scene.purpose, scene.visual_source];
+    if (scene.start != null && scene.end != null) meta.push(scene.start + "–" + scene.end + "s");
+    div.querySelector(".m").textContent = meta.filter(Boolean).join(" · ");
+    div.onclick = () => selectScene(scene, div);
+    host.appendChild(div);
+  }
+}
+
+function selectScene(scene, el) {
+  document.querySelectorAll("#scene-list .scene").forEach((n) => n.classList.remove("selected"));
+  el.classList.add("selected");
+  const form = $("regenerate-form");
+  form.querySelector('input[name="scene_id"]').value = scene.scene_id;
+  const subtitle = form.querySelector('input[name="subtitle"]');
+  const narration = form.querySelector('input[name="narration"]');
+  subtitle.value = "";
+  subtitle.placeholder = scene.subtitle || "";
+  narration.value = "";
+  narration.placeholder = scene.narration || "";
+  form.querySelector('input[name="visual_source"]').placeholder = scene.visual_source || "";
+  $("regen-fields").hidden = false;
+}
+
+function openRegenFor(jobId) {
+  switchTab("regen");
+  const select = $("regen-job-select");
+  if (select.querySelector('option[value="' + jobId + '"]')) {
+    select.value = String(jobId);
+    loadScenes(String(jobId));
+  }
+}
+
+$("regen-job-select").addEventListener("change", (e) => loadScenes(e.target.value));
+
+/* ---------- tabs ---------- */
+function switchTab(name) {
+  document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
+  document.querySelectorAll(".tab-body").forEach((b) => b.classList.toggle("active", b.id === "tab-" + name));
+}
+document.querySelectorAll(".tab").forEach((t) => {
+  t.addEventListener("click", () => switchTab(t.dataset.tab));
+});
+
+/* ---------- generate ---------- */
+$("generate-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  if (!currentPetId) { setStatus("請先選擇一隻寵物", true); return; }
+  if (!currentPetId) { toast("請先從左側選一隻寵物", "err"); return; }
   const form = new FormData(e.target);
+  const animateScenesRaw = (form.get("animate_scenes") || "").trim();
   const body = {
     style: form.get("style"),
     duration: parseInt(form.get("duration"), 10),
     voice_sample: form.get("voice_sample") || null,
     music_track: form.get("music_track") || null,
+    animate_scenes: animateScenesRaw
+      ? animateScenesRaw.split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n))
+      : null,
+    video_provider: form.get("video_provider"),
+    animate_prompt: form.get("animate_prompt") || null,
   };
-  setStatus("生成中，請稍候…");
-  const res = await fetch(`/api/pets/${currentPetId}/generate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    setStatus(`失敗: ${data.detail}`, true);
-    return;
+  const btn = e.target.querySelector("button[type=submit]");
+  btn.disabled = true;
+  busy("正在產生影片（LLM → TTS → FFmpeg）…");
+  try {
+    const data = await api("/api/pets/" + encodeURIComponent(currentPetId) + "/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    toast("完成！新版本 Job " + data.job_id, "ok");
+    playingJobId = data.job_id;
+    await selectPet(currentPetId, true);
+  } catch (err) {
+    toast("生成失敗：" + err.message, "err");
+  } finally {
+    unbusy();
+    btn.disabled = false;
   }
-  setStatus(`完成！Job id: ${data.job_id}`);
-  selectPet(currentPetId);
 });
 
-document.getElementById("regenerate-form").addEventListener("submit", async (e) => {
+/* ---------- regenerate ---------- */
+$("regenerate-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const form = new FormData(e.target);
   const jobId = form.get("job_id");
+  const sceneId = parseInt(form.get("scene_id"), 10);
+  if (!jobId || isNaN(sceneId)) { toast("請先選一個版本與鏡頭", "err"); return; }
   const body = {
-    scene_id: parseInt(form.get("scene_id"), 10),
+    scene_id: sceneId,
     visual_source: form.get("visual_source") || null,
     subtitle: form.get("subtitle") || null,
     narration: form.get("narration") || null,
@@ -177,20 +994,114 @@ document.getElementById("regenerate-form").addEventListener("submit", async (e) 
     music_track: form.get("music_track") || null,
     animate: form.get("animate") === "on",
     video_provider: form.get("video_provider"),
+    animate_prompt: form.get("animate_prompt") || null,
   };
-  setStatus("重新生成中，請稍候…");
-  const res = await fetch(`/api/jobs/${jobId}/regenerate-scene`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    setStatus(`失敗: ${data.detail}`, true);
+  const btn = e.target.querySelector("button[type=submit]");
+  btn.disabled = true;
+  busy("正在重生鏡頭 " + sceneId + "（不重跑 LLM）…");
+  try {
+    const data = await api("/api/jobs/" + jobId + "/regenerate-scene", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    toast("完成！新版本 Job " + data.job_id + "（原版本保留）", "ok");
+    playingJobId = data.job_id;
+    if (currentPetId) await selectPet(currentPetId, true);
+  } catch (err) {
+    toast("重生失敗：" + err.message, "err");
+  } finally {
+    unbusy();
+    btn.disabled = false;
+  }
+});
+
+/* ---------- import / profile editing ---------- */
+const BLANK_PROFILE_TEMPLATE = {
+  pet_id: "PET-XXXX-NNN",
+  name: "",
+  species: "cat",
+  breed: null,
+  sex: "unknown",
+  age: "",
+  size: "medium",
+  location: null,
+  health_status: { vaccinated: false, neutered: false, microchipped: false },
+  personality_tags: { appeal: [], lifestyle_fit: [], care_needs: [], restrictions: [] },
+  story: null,
+  adoption_requirements: [],
+  contact_url: "",
+  media: { assets: [] },
+  identity_card: {},
+};
+
+$("pet-search").addEventListener("input", renderPets);
+
+$("import-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const path = new FormData(e.target).get("path");
+  setLine("import-status", "匯入中…");
+  try {
+    const data = await api("/api/pets/import-path", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: path }),
+    });
+    setLine("import-status", "已匯入 " + data.name, "ok");
+    e.target.reset();
+    await loadPets();
+    await selectPet(data.pet_id);
+    toast("已匯入 " + data.name + "（" + data.pet_id + "）", "ok");
+  } catch (err) {
+    setLine("import-status", "失敗：" + err.message, "err");
+  }
+});
+
+$("new-profile-btn").addEventListener("click", () => {
+  currentPetId = null;
+  currentJobs = [];
+  renderPets();
+  $("empty-state").hidden = true;
+  $("pet-view").hidden = false;
+  $("current-chip").hidden = true;
+  $("pet-title").textContent = "新增寵物";
+  $("pet-sub").textContent = "編輯下方 Pet Profile JSON 後按儲存";
+  $("pet-badges").innerHTML = "";
+  playJob(null);
+  renderRegenPanel();
+  $("profile-editor").value = JSON.stringify(BLANK_PROFILE_TEMPLATE, null, 2);
+  setLine("profile-status", "");
+  const details = $("profile-editor").closest("details");
+  if (details) details.open = true;
+  $("profile-editor").focus();
+});
+
+$("save-profile-btn").addEventListener("click", async () => {
+  let profile;
+  try {
+    profile = JSON.parse($("profile-editor").value);
+  } catch (err) {
+    setLine("profile-status", "JSON 格式錯誤：" + err.message, "err");
     return;
   }
-  setStatus(`完成！新 job id: ${data.job_id}`);
-  if (currentPetId) selectPet(currentPetId);
+  if (!profile.pet_id) {
+    setLine("profile-status", "profile 必須有 pet_id 欄位", "err");
+    return;
+  }
+  setLine("profile-status", "儲存中…");
+  try {
+    const data = await api("/api/pets/" + encodeURIComponent(profile.pet_id) + "/profile", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(profile),
+    });
+    setLine("profile-status", "已儲存 " + data.name, "ok");
+    toast("已儲存 " + data.name + "（" + data.pet_id + "）", "ok");
+    await loadPets();
+    await selectPet(data.pet_id, true);
+  } catch (err) {
+    setLine("profile-status", "失敗：" + err.message, "err");
+  }
 });
 
 loadPets();
