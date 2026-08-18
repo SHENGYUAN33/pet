@@ -204,3 +204,97 @@ def test_get_job_returns_script_scenes(client):
     body = response.json()
     assert body["id"] == job_id
     assert [s["scene_id"] for s in body["script_json"]["scenes"]] == [1, 2]
+
+
+def _asset_dir():
+    return config.ASSETS_DIR / TEST_PET_ID
+
+
+@pytest.fixture
+def _clean_test_assets():
+    yield
+    directory = _asset_dir()
+    if directory.is_dir():
+        for path in directory.iterdir():
+            path.unlink()
+        directory.rmdir()
+
+
+def test_upload_asset_stores_file_and_returns_relative_path(client, _clean_test_assets):
+    """Uploading is how the reviewer's OS file dialog reaches the pipeline —
+    the browser never exposes the picked file's real local path."""
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+
+    response = client.post(
+        f"/api/pets/{TEST_PET_ID}/assets",
+        files={"file": ("元寶 照片.JPG", b"not-really-a-jpeg", "image/jpeg")},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["kind"] == "photo"
+    assert body["path"] == f"storage/assets/{TEST_PET_ID}/{body['filename']}"
+    assert (config.BASE_DIR / body["path"]).is_file()
+
+    listed = client.get(f"/api/pets/{TEST_PET_ID}/assets")
+    assert [a["filename"] for a in listed.json()] == [body["filename"]]
+
+
+def test_upload_asset_does_not_overwrite_same_name(client, _clean_test_assets):
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+
+    first = client.post(
+        f"/api/pets/{TEST_PET_ID}/assets", files={"file": ("photo.png", b"a", "image/png")}
+    ).json()
+    second = client.post(
+        f"/api/pets/{TEST_PET_ID}/assets", files={"file": ("photo.png", b"b", "image/png")}
+    ).json()
+
+    assert first["filename"] != second["filename"]
+    assert (config.BASE_DIR / first["path"]).read_bytes() == b"a"
+
+
+def test_upload_asset_rejects_unsupported_extension(client, _clean_test_assets):
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+
+    response = client.post(
+        f"/api/pets/{TEST_PET_ID}/assets",
+        files={"file": ("payload.exe", b"MZ", "application/octet-stream")},
+    )
+
+    assert response.status_code == 400
+    assert not (_asset_dir() / "payload.exe").exists()
+
+
+def test_upload_asset_rejects_unknown_pet(client):
+    response = client.post(
+        "/api/pets/PET-DOES-NOT-EXIST/assets",
+        files={"file": ("photo.png", b"a", "image/png")},
+    )
+    assert response.status_code == 404
+
+
+def test_asset_dir_rejects_path_traversal_pet_id():
+    """pet_id is used as a directory component, so it must never be able to
+    address anything outside storage/assets/."""
+    from fastapi import HTTPException
+
+    from webapp.main import _pet_asset_dir
+
+    for bad_id in ["../evil", "..", "PET/../../evil", r"C:\Windows"]:
+        with pytest.raises(HTTPException) as excinfo:
+            _pet_asset_dir(bad_id, create=True)
+        assert excinfo.value.status_code == 400
+
+
+def test_list_profile_files_returns_json_filenames(client):
+    profile_path = config.PROFILES_DIR / f"{TEST_PET_ID}.json"
+    profile_path.write_text(
+        json.dumps(_sample_profile_json(), ensure_ascii=False), encoding="utf-8"
+    )
+    try:
+        response = client.get("/api/profile-files")
+        assert response.status_code == 200
+        assert f"{TEST_PET_ID}.json" in response.json()
+    finally:
+        profile_path.unlink(missing_ok=True)

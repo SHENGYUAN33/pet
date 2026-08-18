@@ -177,6 +177,7 @@ h1, h2, h3, h4 { margin: 0; font-weight: 650; }
   color: var(--text-dim);
   margin-bottom: 5px;
 }
+.field .req { color: var(--danger); font-weight: 700; }
 .field .sub { display: block; font-weight: 400; color: var(--text-faint); font-size: 11.5px; margin-top: 2px; }
 input[type="text"], input[type="number"], input[type="search"], select, textarea {
   width: 100%;
@@ -313,7 +314,85 @@ video { width: 100%; max-height: 46vh; background: #000; display: block; }
 .scene .sub-line { font-size: 13px; }
 .scene .m { font-size: 11.5px; color: var(--text-faint); }
 
-/* ---------- profile editor ---------- */
+/* ---------- profile form ---------- */
+.form-group-title {
+  margin: 18px 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.form-group-title:first-child { margin-top: 0; }
+.form-group-title .note { font-weight: 400; color: var(--text-faint); font-size: 11.5px; margin-left: 8px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0 14px; }
+.check-row { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 12px; }
+.check-row .check { margin-bottom: 0; }
+textarea.auto { min-height: 76px; resize: vertical; font-family: inherit; }
+
+/* ---------- tag editor ---------- */
+.tags {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.tags:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.tags .chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 6px 2px 9px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.tags .chip.warnchip { background: var(--warn-soft); color: var(--warn); }
+.tags .chip button {
+  border: none; background: none; padding: 0 2px;
+  color: inherit; font-size: 13px; line-height: 1; cursor: pointer;
+}
+.tags input {
+  flex: 1; min-width: 90px;
+  border: none; outline: none; background: none;
+  padding: 3px 4px;
+}
+.tags input:focus { box-shadow: none; }
+
+/* ---------- file picker ---------- */
+.filepick { display: flex; flex-direction: column; gap: 6px; }
+.filepick .picked {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 12.5px;
+  min-height: 36px;
+}
+.filepick .picked .fname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.filepick .picked.none .fname { color: var(--text-faint); }
+.filepick .actions { display: flex; gap: 6px; }
+.filepick select { flex: 1; min-width: 0; font-size: 12.5px; padding: 6px 8px; }
+.filepick button { white-space: nowrap; padding: 6px 10px; font-size: 12.5px; }
+
+/* ---------- asset rows ---------- */
+.asset {
+  display: flex; align-items: center; gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin-bottom: 7px;
+  background: var(--surface-2);
+}
+.asset .ico { font-size: 18px; }
+.asset .info { flex: 1; min-width: 0; }
+.asset .info .fn { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.asset .info .aid { font-size: 11.5px; color: var(--text-faint); font-family: ui-monospace, Consolas, monospace; }
+.asset .thumb { width: 46px; height: 46px; border-radius: 6px; object-fit: cover; background: var(--surface); border: 1px solid var(--border); }
+
+/* ---------- legacy JSON editor ---------- */
 #profile-editor {
   font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
   font-size: 12.5px;
@@ -382,6 +461,7 @@ video { width: 100%; max-height: 46vh; background: #000; display: block; }
 
 .status-line { font-size: 12.5px; margin-top: 8px; color: var(--text-dim); min-height: 18px; }
 .status-line.err { color: var(--danger); }
+.status-line.warn { color: var(--warn); }
 .status-line.ok { color: var(--ok); }
 </style>
 </head>
@@ -405,12 +485,12 @@ video { width: 100%; max-height: 46vh; background: #000; display: block; }
     </div>
 
     <details class="adv" style="margin-top:14px">
-      <summary>從檔案路徑匯入 Profile</summary>
+      <summary>從現成檔案匯入</summary>
       <div class="adv-body">
         <form id="import-form">
           <label class="field">
-            <span class="lbl">檔案路徑<span class="sub">相對於 storage/profiles/</span></span>
-            <input type="text" name="path" placeholder="PET-2026-002.json" required />
+            <span class="lbl">選擇檔案<span class="sub">storage/profiles/ 裡的 JSON</span></span>
+            <select name="path" id="import-select" required></select>
           </label>
           <button type="submit" class="primary">匯入</button>
         </form>
@@ -448,17 +528,144 @@ video { width: 100%; max-height: 46vh; background: #000; display: block; }
           <div id="job-list" style="margin-top:10px"></div>
         </div>
 
-        <details class="adv">
-          <summary>Pet Profile（進階：直接編輯 JSON）</summary>
-          <div class="adv-body">
-            <textarea id="profile-editor" spellcheck="false"></textarea>
-            <div class="row" style="margin:10px 0 4px">
-              <button type="button" class="primary" style="width:auto" id="save-profile-btn">儲存 Profile</button>
-              <span class="hint">會經過 pydantic 驗證，pet_id 相同即覆蓋</span>
+        <div class="card" id="profile-card">
+          <div class="row" style="justify-content:space-between">
+            <p class="section-label" style="margin:0">寵物資料</p>
+            <span class="hint">影片內容只會用這裡填的資料，不會自己編故事</span>
+          </div>
+
+          <form id="profile-form" style="margin-top:14px">
+            <p class="form-group-title">基本資料</p>
+            <div class="grid2">
+              <label class="field">
+                <span class="lbl">寵物編號 <span class="req">*</span><span class="sub">存檔後就不要再改，例如 PET-2026-003</span></span>
+                <input type="text" name="pet_id" required placeholder="PET-2026-003" />
+              </label>
+              <label class="field">
+                <span class="lbl">名字 <span class="req">*</span></span>
+                <input type="text" name="name" required placeholder="元寶" />
+              </label>
+              <label class="field">
+                <span class="lbl">種類 <span class="req">*</span></span>
+                <select name="species">
+                  <option value="cat">貓</option>
+                  <option value="dog">狗</option>
+                </select>
+              </label>
+              <label class="field">
+                <span class="lbl">品種<span class="sub">不知道就留白</span></span>
+                <input type="text" name="breed" placeholder="米克斯" />
+              </label>
+              <label class="field">
+                <span class="lbl">性別</span>
+                <select name="sex">
+                  <option value="male">男生</option>
+                  <option value="female">女生</option>
+                  <option value="unknown">不確定</option>
+                </select>
+              </label>
+              <label class="field">
+                <span class="lbl">年齡 <span class="req">*</span><span class="sub">用寫的就好，例如「約 2 歲」</span></span>
+                <input type="text" name="age" required placeholder="約 2 歲" />
+              </label>
+              <label class="field">
+                <span class="lbl">體型</span>
+                <select name="size">
+                  <option value="small">小型</option>
+                  <option value="medium">中型</option>
+                  <option value="large">大型</option>
+                </select>
+              </label>
+              <label class="field">
+                <span class="lbl">所在地</span>
+                <input type="text" name="location" placeholder="台北市中途之家" />
+              </label>
+            </div>
+            <label class="field">
+              <span class="lbl">領養聯絡連結 <span class="req">*</span><span class="sub">影片結尾 CTA 會用到的網址</span></span>
+              <input type="text" name="contact_url" required placeholder="https://example.org/adopt/PET-2026-003" />
+            </label>
+
+            <p class="form-group-title">健康狀態<span class="note">影片會據實揭露，不能亂勾</span></p>
+            <div class="check-row">
+              <label class="check"><input type="checkbox" name="vaccinated" /><span>已打疫苗</span></label>
+              <label class="check"><input type="checkbox" name="neutered" /><span>已結紮</span></label>
+              <label class="check"><input type="checkbox" name="microchipped" /><span>已植入晶片</span></label>
+            </div>
+
+            <p class="form-group-title">個性與需求<span class="note">打字後按 Enter 或逗號新增一個標籤</span></p>
+            <div class="grid2">
+              <div class="field">
+                <span class="lbl">討喜特點<span class="sub">例如：親人、愛撒嬌</span></span>
+                <div class="tags" data-tags="appeal"></div>
+              </div>
+              <div class="field">
+                <span class="lbl">適合的家庭<span class="sub">例如：有小孩的家庭、上班族</span></span>
+                <div class="tags" data-tags="lifestyle_fit"></div>
+              </div>
+              <div class="field">
+                <span class="lbl">照護需求<span class="sub">例如：每日梳毛、需要陪伴</span></span>
+                <div class="tags" data-tags="care_needs"></div>
+              </div>
+              <div class="field">
+                <span class="lbl">限制條件<span class="sub">例如：不能與狗同住 — 影片一定要講出來</span></span>
+                <div class="tags" data-tags="restrictions"></div>
+              </div>
+            </div>
+
+            <p class="form-group-title">故事與領養條件</p>
+            <label class="field">
+              <span class="lbl">牠的故事<span class="sub">怎麼被發現的、現在的狀況</span></span>
+              <textarea name="story" class="auto" placeholder="在公園被發現時只有兩個月大…"></textarea>
+            </label>
+            <label class="field">
+              <span class="lbl">領養條件<span class="sub">一行一條</span></span>
+              <textarea name="adoption_requirements" class="auto" placeholder="需簽署領養切結書&#10;需家訪"></textarea>
+            </label>
+
+            <p class="form-group-title">照片與影片<span class="note">影片的畫面就從這裡挑</span></p>
+            <div id="asset-list"></div>
+            <div class="row" style="margin-bottom:12px">
+              <button type="button" id="asset-upload-btn">📁 從電腦選擇檔案上傳</button>
+              <span class="hint" id="asset-hint">可一次選多個照片或影片</span>
+            </div>
+
+            <details class="adv">
+              <summary>外觀特徵（選填，用來檢查影片裡是不是同一隻）</summary>
+              <div class="adv-body">
+                <div class="grid2">
+                  <label class="field"><span class="lbl">毛色</span><input type="text" name="ic_coat_color" placeholder="橘白" /></label>
+                  <label class="field"><span class="lbl">花紋</span><input type="text" name="ic_pattern" placeholder="虎斑" /></label>
+                  <label class="field"><span class="lbl">耳型</span><input type="text" name="ic_ear_type" placeholder="立耳" /></label>
+                  <label class="field"><span class="lbl">眼睛顏色</span><input type="text" name="ic_eye_color" placeholder="琥珀色" /></label>
+                  <label class="field"><span class="lbl">體態</span><input type="text" name="ic_body_type" placeholder="偏瘦" /></label>
+                  <label class="field"><span class="lbl">配件</span><input type="text" name="ic_accessories" placeholder="紅色項圈" /></label>
+                </div>
+                <label class="field"><span class="lbl">特殊標記</span><input type="text" name="ic_distinguishing_marks" placeholder="左後腳有白襪" /></label>
+              </div>
+            </details>
+
+            <div class="row" style="margin:16px 0 4px">
+              <button type="submit" class="primary" style="width:auto">💾 儲存寵物資料</button>
+              <button type="button" id="profile-reset-btn">取消變更</button>
+              <span class="hint">存檔前會自動檢查必填欄位</span>
             </div>
             <div id="profile-status" class="status-line"></div>
-          </div>
-        </details>
+          </form>
+
+          <details class="adv" style="margin-top:10px">
+            <summary>進階：直接編輯 JSON</summary>
+            <div class="adv-body">
+              <p class="hint" style="margin-top:0">給熟悉 schema 的人用。按「套用到上方表單」後，仍要用表單的儲存鈕才會寫入資料庫。</p>
+              <textarea id="profile-editor" spellcheck="false"></textarea>
+              <div class="row" style="margin:10px 0 4px">
+                <button type="button" id="apply-json-btn">套用到上方表單</button>
+                <span class="hint">會經過 pydantic 驗證，pet_id 相同即覆蓋</span>
+              </div>
+              <div id="json-status" class="status-line"></div>
+            </div>
+          </details>
+        </div>
       </div>
     </section>
 
@@ -486,14 +693,14 @@ video { width: 100%; max-height: 46vh; background: #000; display: block; }
           <details class="adv">
             <summary>音訊素材（選填）</summary>
             <div class="adv-body">
-              <label class="field">
-                <span class="lbl">語音參考檔<span class="sub">XTTS voice cloning 用的 wav 路徑</span></span>
-                <input type="text" name="voice_sample" placeholder="storage/assets/PET-.../voice_ref.wav" />
-              </label>
-              <label class="field">
+              <div class="field">
+                <span class="lbl">配音參考檔<span class="sub">一段人聲 wav／mp3，旁白會模仿這個聲音</span></span>
+                <div class="filepick" data-field="voice_sample" data-kind="audio"></div>
+              </div>
+              <div class="field">
                 <span class="lbl">背景音樂</span>
-                <input type="text" name="music_track" placeholder="storage/assets/PET-.../music.mp3" />
-              </label>
+                <div class="filepick" data-field="music_track" data-kind="audio"></div>
+              </div>
             </div>
           </details>
 
@@ -552,17 +759,19 @@ video { width: 100%; max-height: 46vh; background: #000; display: block; }
               <summary>換素材與音訊（選填）</summary>
               <div class="adv-body">
                 <label class="field">
-                  <span class="lbl">新素材 asset_id</span>
-                  <input type="text" name="visual_source" placeholder="uploaded_photo_02" />
+                  <span class="lbl">換一個畫面素材<span class="sub">從這隻寵物的照片／影片挑</span></span>
+                  <select name="visual_source" id="regen-visual-source">
+                    <option value="">不更換</option>
+                  </select>
                 </label>
-                <label class="field">
-                  <span class="lbl">語音參考檔<span class="sub">要比照原生成時再填一次</span></span>
-                  <input type="text" name="voice_sample" />
-                </label>
-                <label class="field">
-                  <span class="lbl">背景音樂<span class="sub">要比照原生成時再填一次</span></span>
-                  <input type="text" name="music_track" />
-                </label>
+                <div class="field">
+                  <span class="lbl">配音參考檔<span class="sub">要比照原生成時再選一次</span></span>
+                  <div class="filepick" data-field="voice_sample" data-kind="audio"></div>
+                </div>
+                <div class="field">
+                  <span class="lbl">背景音樂<span class="sub">要比照原生成時再選一次</span></span>
+                  <div class="filepick" data-field="music_track" data-kind="audio"></div>
+                </div>
               </div>
             </details>
 
@@ -597,6 +806,7 @@ video { width: 100%; max-height: 46vh; background: #000; display: block; }
   </main>
 </div>
 
+<input type="file" id="os-file-input" hidden />
 <div id="toast-host"></div>
 <div id="busy"><div class="box">
   <div class="spinner"></div>
@@ -734,6 +944,12 @@ async function selectPet(petId, keepPlaying) {
     toast("找不到寵物 " + petId + "：" + err.message, "err");
     return;
   }
+  // Audio picks point into storage/assets/<pet_id>/, so they'd be stale on a
+  // different pet — but keep them across a re-select of the same pet (after a
+  // generation) so the reviewer doesn't have to re-pick the music each run.
+  if (currentPetId !== petId) {
+    document.querySelectorAll(".filepick").forEach((host) => setFilePick(host, ""));
+  }
   currentPetId = petId;
   sceneCache = {};
   $("empty-state").hidden = true;
@@ -741,8 +957,9 @@ async function selectPet(petId, keepPlaying) {
   renderPets();
   renderPetHeader(data.profile);
 
-  $("profile-editor").value = JSON.stringify(data.profile, null, 2);
+  loadProfileIntoForm(data.profile);
   setLine("profile-status", "");
+  refreshAssetChoices();
 
   currentJobs = data.jobs;
   if (!keepPlaying || !currentJobs.some((j) => j.id === playingJobId)) {
@@ -917,7 +1134,13 @@ function selectScene(scene, el) {
   subtitle.placeholder = scene.subtitle || "";
   narration.value = "";
   narration.placeholder = scene.narration || "";
-  form.querySelector('input[name="visual_source"]').placeholder = scene.visual_source || "";
+  // "不更換" by default; the option list is labelled so the reviewer can see
+  // which asset this scene is currently using.
+  const visualSelect = $("regen-visual-source");
+  visualSelect.value = "";
+  visualSelect.options[0].textContent = scene.visual_source
+    ? "不更換（目前是 " + scene.visual_source + "）"
+    : "不更換";
   $("regen-fields").hidden = false;
 }
 
@@ -1016,7 +1239,367 @@ $("regenerate-form").addEventListener("submit", async (e) => {
   }
 });
 
-/* ---------- import / profile editing ---------- */
+/* ---------- file pickers ----------
+   A browser never hands a web page the real path of a file the user picked in
+   the OS dialog (security), so "pick a file on my computer" means: open the
+   dialog, upload the bytes into storage/assets/<pet_id>/, then work with the
+   stored copy's path. Each .filepick also lists what is already in that
+   folder, so a file only has to be uploaded once. */
+const KIND_ICON = { photo: "🖼️", video: "🎬", audio: "🎵", other: "📄" };
+const KIND_ACCEPT = {
+  audio: "audio/*",
+  media: "image/*,video/*",
+};
+
+let currentAssets = [];
+
+function buildFilePick(host) {
+  const kind = host.dataset.kind || "media";
+  host.innerHTML =
+    '<input type="hidden" name="' + host.dataset.field + '" />' +
+    '<div class="picked none"><span class="ico">' + (kind === "audio" ? "🎵" : "🖼️") + "</span>" +
+    '<span class="fname">尚未選擇檔案</span>' +
+    '<button type="button" class="tiny" data-act="clear" hidden>清除</button></div>' +
+    '<div class="actions">' +
+    '<button type="button" data-act="upload">📁 從電腦選擇</button>' +
+    '<select data-act="existing"><option value="">或選已上傳的檔案…</option></select>' +
+    "</div>";
+
+  host.querySelector('[data-act="upload"]').onclick = () => {
+    pickFromComputer({ accept: KIND_ACCEPT[kind] || "", multiple: false }, async (files) => {
+      const uploaded = await uploadAssets(files);
+      if (uploaded.length) setFilePick(host, uploaded[0].path);
+    });
+  };
+  host.querySelector('[data-act="existing"]').onchange = (e) => {
+    if (e.target.value) setFilePick(host, e.target.value);
+    e.target.value = "";
+  };
+  host.querySelector('[data-act="clear"]').onclick = () => setFilePick(host, "");
+}
+
+function setFilePick(host, path) {
+  host.querySelector("input[type=hidden]").value = path || "";
+  const picked = host.querySelector(".picked");
+  picked.classList.toggle("none", !path);
+  picked.querySelector(".fname").textContent = path ? path.split("/").pop() : "尚未選擇檔案";
+  picked.querySelector(".fname").title = path || "";
+  picked.querySelector('[data-act="clear"]').hidden = !path;
+}
+
+function filePickValue(host) {
+  return host.querySelector("input[type=hidden]").value || null;
+}
+
+/** One shared hidden <input type=file> — clicking it is what opens the OS dialog. */
+function pickFromComputer(opts, onFiles) {
+  const input = $("os-file-input");
+  input.value = "";
+  input.accept = opts.accept || "";
+  input.multiple = !!opts.multiple;
+  input.onchange = async () => {
+    const files = Array.from(input.files || []);
+    input.onchange = null;
+    if (files.length) await onFiles(files);
+  };
+  input.click();
+}
+
+async function uploadAssets(files) {
+  if (!currentPetId) {
+    toast("請先選一隻寵物，或先儲存新寵物的資料（要有寵物編號才知道檔案放哪）", "err");
+    return [];
+  }
+  const uploaded = [];
+  busy("上傳檔案中…");
+  try {
+    for (const file of files) {
+      const body = new FormData();
+      body.append("file", file);
+      try {
+        uploaded.push(
+          await api("/api/pets/" + encodeURIComponent(currentPetId) + "/assets", {
+            method: "POST",
+            body: body,
+          })
+        );
+      } catch (err) {
+        toast(file.name + " 上傳失敗：" + err.message, "err");
+      }
+    }
+  } finally {
+    unbusy();
+  }
+  if (uploaded.length) {
+    toast("已上傳 " + uploaded.length + " 個檔案", "ok");
+    await refreshAssetChoices();
+  }
+  return uploaded;
+}
+
+/** Re-read storage/assets/<pet_id>/ and repopulate every "already uploaded" list. */
+async function refreshAssetChoices() {
+  currentAssets = [];
+  if (currentPetId) {
+    try {
+      currentAssets = await api("/api/pets/" + encodeURIComponent(currentPetId) + "/assets");
+    } catch (err) {
+      currentAssets = [];
+    }
+  }
+  for (const host of document.querySelectorAll(".filepick")) {
+    const kind = host.dataset.kind || "media";
+    const select = host.querySelector('[data-act="existing"]');
+    const options = currentAssets.filter((a) =>
+      kind === "audio" ? a.kind === "audio" : a.kind === "photo" || a.kind === "video"
+    );
+    select.innerHTML = '<option value="">' +
+      (options.length ? "或選已上傳的檔案…" : "（這隻寵物還沒有上傳檔案）") + "</option>";
+    for (const asset of options) {
+      const opt = document.createElement("option");
+      opt.value = asset.path;
+      opt.textContent = (KIND_ICON[asset.kind] || "📄") + " " + asset.filename;
+      select.appendChild(opt);
+    }
+  }
+  renderVisualSourceOptions();
+}
+
+/* ---------- profile form ---------- */
+const TAG_FIELDS = ["appeal", "lifestyle_fit", "care_needs", "restrictions"];
+const IDENTITY_FIELDS = [
+  "coat_color", "pattern", "ear_type", "eye_color", "body_type",
+  "accessories", "distinguishing_marks",
+];
+
+/* Anything in the stored profile this form has no widget for (e.g. an asset's
+   usage_license_status) is kept here and merged back on save, so editing
+   through the form never silently drops schema fields. */
+let profileBase = {};
+let profileAssets = [];
+
+function initTagEditor(host) {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.placeholder = "輸入後按 Enter";
+  host.appendChild(input);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === ",") {
+      e.preventDefault();
+      addTag(host, input.value);
+      input.value = "";
+    } else if (e.key === "Backspace" && !input.value) {
+      const chips = host.querySelectorAll(".chip");
+      if (chips.length) chips[chips.length - 1].remove();
+    }
+  });
+  input.addEventListener("blur", () => { addTag(host, input.value); input.value = ""; });
+  host.addEventListener("click", (e) => { if (e.target === host) input.focus(); });
+}
+
+function addTag(host, rawText) {
+  const text = (rawText || "").trim();
+  if (!text || getTags(host).includes(text)) return;
+  const chip = document.createElement("span");
+  chip.className = "chip" + (host.dataset.tags === "restrictions" ? " warnchip" : "");
+  chip.innerHTML = '<span class="t"></span><button type="button" title="移除">×</button>';
+  chip.querySelector(".t").textContent = text;
+  chip.querySelector("button").onclick = () => chip.remove();
+  host.insertBefore(chip, host.querySelector("input"));
+}
+
+function getTags(host) {
+  return Array.from(host.querySelectorAll(".chip .t")).map((n) => n.textContent);
+}
+
+function setTags(host, values) {
+  host.querySelectorAll(".chip").forEach((n) => n.remove());
+  for (const value of values || []) addTag(host, value);
+}
+
+function loadProfileIntoForm(profile) {
+  profileBase = JSON.parse(JSON.stringify(profile || {}));
+  const form = $("profile-form");
+  const set = (name, value) => { form.querySelector('[name="' + name + '"]').value = value == null ? "" : value; };
+
+  for (const name of ["pet_id", "name", "species", "breed", "age", "size", "location", "contact_url", "sex", "story"]) {
+    set(name, profile[name]);
+  }
+  if (!profile.species) set("species", "cat");
+  if (!profile.sex) set("sex", "unknown");
+  if (!profile.size) set("size", "medium");
+  set("adoption_requirements", (profile.adoption_requirements || []).join("\n"));
+
+  const health = profile.health_status || {};
+  for (const key of ["vaccinated", "neutered", "microchipped"]) {
+    form.querySelector('[name="' + key + '"]').checked = !!health[key];
+  }
+  const tags = profile.personality_tags || {};
+  for (const key of TAG_FIELDS) setTags(form.querySelector('[data-tags="' + key + '"]'), tags[key]);
+
+  const identity = profile.identity_card || {};
+  for (const key of IDENTITY_FIELDS) set("ic_" + key, identity[key]);
+
+  profileAssets = ((profile.media || {}).assets || []).map((a) => Object.assign({}, a));
+  renderProfileAssets();
+  $("profile-editor").value = JSON.stringify(profile, null, 2);
+  setLine("json-status", "");
+}
+
+function readProfileForm() {
+  const form = $("profile-form");
+  const get = (name) => form.querySelector('[name="' + name + '"]').value.trim();
+  const orNull = (value) => (value === "" ? null : value);
+  const checked = (name) => form.querySelector('[name="' + name + '"]').checked;
+
+  const identity = {};
+  for (const key of IDENTITY_FIELDS) identity[key] = orNull(get("ic_" + key));
+  const tags = {};
+  for (const key of TAG_FIELDS) tags[key] = getTags(form.querySelector('[data-tags="' + key + '"]'));
+
+  return Object.assign({}, profileBase, {
+    pet_id: get("pet_id"),
+    name: get("name"),
+    species: get("species"),
+    breed: orNull(get("breed")),
+    sex: get("sex"),
+    age: get("age"),
+    size: get("size"),
+    location: orNull(get("location")),
+    contact_url: get("contact_url"),
+    story: orNull(get("story")),
+    adoption_requirements: get("adoption_requirements").split("\n").map((s) => s.trim()).filter(Boolean),
+    health_status: {
+      vaccinated: checked("vaccinated"),
+      neutered: checked("neutered"),
+      microchipped: checked("microchipped"),
+    },
+    personality_tags: tags,
+    identity_card: Object.assign({}, profileBase.identity_card || {}, identity),
+    media: Object.assign({}, profileBase.media || {}, { assets: profileAssets }),
+  });
+}
+
+function renderProfileAssets() {
+  const host = $("asset-list");
+  host.innerHTML = "";
+  if (!profileAssets.length) {
+    host.className = "hint";
+    host.style.marginBottom = "10px";
+    host.textContent = currentPetId
+      ? "還沒有照片或影片 — 影片至少需要一張照片，請用下方按鈕上傳。"
+      : "先填好基本資料並儲存，才能上傳照片（要有寵物編號才知道檔案放哪）。";
+    return;
+  }
+  host.className = "";
+  profileAssets.forEach((asset, index) => {
+    const filename = (asset.url || "").split("/").pop();
+    const div = document.createElement("div");
+    div.className = "asset";
+    const isPhoto = asset.type === "photo";
+    div.innerHTML =
+      (isPhoto && currentPetId
+        ? '<img class="thumb" alt="" src="/media/' + encodeURIComponent(currentPetId) + "/" + encodeURIComponent(filename) + '" />'
+        : '<span class="ico">' + (KIND_ICON[asset.type] || "📄") + "</span>") +
+      '<div class="info"><div class="fn"></div><div class="aid"></div></div>' +
+      '<button type="button" class="tiny" data-act="remove">移除</button>';
+    div.querySelector(".fn").textContent = filename || "(沒有檔名)";
+    div.querySelector(".aid").textContent =
+      asset.asset_id + " · " + ({ photo: "照片", video: "影片", audio: "音訊" }[asset.type] || asset.type);
+    div.querySelector('[data-act="remove"]').onclick = () => {
+      profileAssets.splice(index, 1);
+      renderProfileAssets();
+      renderVisualSourceOptions();
+    };
+    host.appendChild(div);
+  });
+}
+
+function nextAssetId(kind) {
+  let n = profileAssets.length + 1;
+  const taken = new Set(profileAssets.map((a) => a.asset_id));
+  while (taken.has(kind + "_" + String(n).padStart(2, "0"))) n += 1;
+  return kind + "_" + String(n).padStart(2, "0");
+}
+
+function renderVisualSourceOptions() {
+  const select = $("regen-visual-source");
+  const previous = select.value;
+  select.innerHTML = '<option value="">不更換</option>';
+  for (const asset of profileAssets) {
+    const opt = document.createElement("option");
+    opt.value = asset.asset_id;
+    opt.textContent =
+      (KIND_ICON[asset.type] || "📄") + " " + asset.asset_id + " · " + (asset.url || "").split("/").pop();
+    select.appendChild(opt);
+  }
+  select.value = previous;
+}
+
+$("asset-upload-btn").addEventListener("click", () => {
+  pickFromComputer({ accept: KIND_ACCEPT.media, multiple: true }, async (files) => {
+    const uploaded = await uploadAssets(files);
+    for (const asset of uploaded) {
+      if (profileAssets.some((a) => a.url === asset.path)) continue;
+      profileAssets.push({
+        asset_id: nextAssetId(asset.kind === "video" ? "video" : "photo"),
+        type: asset.kind,
+        url: asset.path,
+        usage_license_status: "granted",
+        ai_extension_allowed: true,
+      });
+    }
+    renderProfileAssets();
+    renderVisualSourceOptions();
+    if (uploaded.length) setLine("profile-status", "檔案已上傳，記得按「儲存寵物資料」才會寫進資料庫。", "warn");
+  });
+});
+
+$("profile-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  await saveProfile(readProfileForm());
+});
+
+$("profile-reset-btn").addEventListener("click", () => {
+  if (currentPetId) selectPet(currentPetId, true);
+  else loadProfileIntoForm(BLANK_PROFILE_TEMPLATE);
+});
+
+$("apply-json-btn").addEventListener("click", () => {
+  let parsed;
+  try {
+    parsed = JSON.parse($("profile-editor").value);
+  } catch (err) {
+    setLine("json-status", "JSON 格式錯誤：" + err.message, "err");
+    return;
+  }
+  loadProfileIntoForm(parsed);
+  setLine("json-status", "已套用到表單，請按「儲存寵物資料」寫入。", "ok");
+});
+
+async function saveProfile(profile) {
+  if (!profile.pet_id) {
+    setLine("profile-status", "請填寵物編號", "err");
+    return;
+  }
+  setLine("profile-status", "儲存中…");
+  try {
+    const data = await api("/api/pets/" + encodeURIComponent(profile.pet_id) + "/profile", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(profile),
+    });
+    setLine("profile-status", "已儲存 " + data.name, "ok");
+    toast("已儲存 " + data.name + "（" + data.pet_id + "）", "ok");
+    await loadPets();
+    await selectPet(data.pet_id, true);
+  } catch (err) {
+    setLine("profile-status", "失敗：" + err.message, "err");
+    toast("儲存失敗：" + err.message, "err");
+  }
+}
+
+/* ---------- import / new pet ---------- */
 const BLANK_PROFILE_TEMPLATE = {
   pet_id: "PET-XXXX-NNN",
   name: "",
@@ -1065,45 +1648,44 @@ $("new-profile-btn").addEventListener("click", () => {
   $("pet-view").hidden = false;
   $("current-chip").hidden = true;
   $("pet-title").textContent = "新增寵物";
-  $("pet-sub").textContent = "編輯下方 Pet Profile JSON 後按儲存";
+  $("pet-sub").textContent = "填好下方「寵物資料」後按儲存，就能開始上傳照片與產生影片";
   $("pet-badges").innerHTML = "";
   playJob(null);
   renderRegenPanel();
-  $("profile-editor").value = JSON.stringify(BLANK_PROFILE_TEMPLATE, null, 2);
+  loadProfileIntoForm(BLANK_PROFILE_TEMPLATE);
+  $("profile-form").querySelector('[name="pet_id"]').value = "";
   setLine("profile-status", "");
-  const details = $("profile-editor").closest("details");
-  if (details) details.open = true;
-  $("profile-editor").focus();
+  refreshAssetChoices();
+  $("profile-card").scrollIntoView({ behavior: "smooth", block: "start" });
+  $("profile-form").querySelector('[name="pet_id"]').focus();
 });
 
-$("save-profile-btn").addEventListener("click", async () => {
-  let profile;
+async function loadProfileFiles() {
+  const select = $("import-select");
+  let files = [];
   try {
-    profile = JSON.parse($("profile-editor").value);
+    files = await api("/api/profile-files");
   } catch (err) {
-    setLine("profile-status", "JSON 格式錯誤：" + err.message, "err");
+    files = [];
+  }
+  select.innerHTML = "";
+  if (!files.length) {
+    select.innerHTML = '<option value="">storage/profiles/ 裡沒有 JSON 檔</option>';
     return;
   }
-  if (!profile.pet_id) {
-    setLine("profile-status", "profile 必須有 pet_id 欄位", "err");
-    return;
+  select.innerHTML = '<option value="">請選擇…</option>';
+  for (const name of files) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    select.appendChild(opt);
   }
-  setLine("profile-status", "儲存中…");
-  try {
-    const data = await api("/api/pets/" + encodeURIComponent(profile.pet_id) + "/profile", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(profile),
-    });
-    setLine("profile-status", "已儲存 " + data.name, "ok");
-    toast("已儲存 " + data.name + "（" + data.pet_id + "）", "ok");
-    await loadPets();
-    await selectPet(data.pet_id, true);
-  } catch (err) {
-    setLine("profile-status", "失敗：" + err.message, "err");
-  }
-});
+}
 
+/* ---------- init ---------- */
+document.querySelectorAll(".tags").forEach(initTagEditor);
+document.querySelectorAll(".filepick").forEach(buildFilePick);
+loadProfileFiles();
 loadPets();
 </script>
 

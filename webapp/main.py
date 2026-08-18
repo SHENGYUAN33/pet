@@ -15,9 +15,11 @@ background task queue, deliberately out of scope for this slice.
 from __future__ import annotations
 
 import json
+import re
+import shutil
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
@@ -51,6 +53,137 @@ def _resolve_profile_path(raw_path: str) -> Path:
     if not candidate.is_file():
         raise HTTPException(status_code=404, detail=f"File not found: {candidate}")
     return candidate
+
+
+@app.get("/api/profile-files")
+def api_list_profile_files():
+    """Filenames available under storage/profiles/, so the import form can be a
+    dropdown instead of asking a non-technical reviewer to type a path."""
+    profiles_dir = config.PROFILES_DIR
+    if not profiles_dir.is_dir():
+        return []
+    return sorted(p.name for p in profiles_dir.glob("*.json") if p.is_file())
+
+
+# Media a shelter volunteer can plausibly upload through the review UI. Kept as
+# an allowlist (rather than blocking a few known-bad extensions) so nothing
+# executable can ever land in storage/assets/ — the pipeline only ever feeds
+# these to FFmpeg/XTTS.
+ASSET_KIND_BY_SUFFIX = {
+    ".jpg": "photo",
+    ".jpeg": "photo",
+    ".png": "photo",
+    ".webp": "photo",
+    ".bmp": "photo",
+    ".mp4": "video",
+    ".mov": "video",
+    ".m4v": "video",
+    ".mkv": "video",
+    ".avi": "video",
+    ".webm": "video",
+    ".wav": "audio",
+    ".mp3": "audio",
+    ".m4a": "audio",
+    ".aac": "audio",
+    ".ogg": "audio",
+    ".flac": "audio",
+}
+MAX_ASSET_BYTES = 500 * 1024 * 1024
+# Module-level singleton: FastAPI wants the marker as a default, ruff (B008)
+# wants no call in a default.
+_UPLOADED_FILE = File(...)
+_SAFE_PET_ID = re.compile(r"^[A-Za-z0-9._-]+$")
+_UNSAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9._\-一-鿿]+")
+
+
+def _pet_asset_dir(pet_id: str, create: bool = False) -> Path:
+    """storage/assets/<pet_id>/ for a pet that exists in the DB.
+
+    pet_id lands here straight off the URL and is used as a path component, so
+    it is both charset-checked and confirmed to be a known pet before any
+    filesystem access — a reviewer cannot address a directory outside
+    storage/assets/ through this endpoint.
+    """
+    directory = (config.ASSETS_DIR / pet_id).resolve()
+    # Charset check plus containment check: the first rejects separators and
+    # drive letters, the second still catches anything (".." and friends) that
+    # passes the charset but escapes storage/assets/.
+    if not _SAFE_PET_ID.match(pet_id) or config.ASSETS_DIR.resolve() not in directory.parents:
+        raise HTTPException(status_code=400, detail=f"Invalid pet_id: {pet_id!r}")
+    if get_pet(pet_id) is None:
+        raise HTTPException(status_code=404, detail=f"No pet found with id {pet_id!r}")
+    if create:
+        directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _asset_entry(path: Path, pet_id: str) -> dict:
+    return {
+        "filename": path.name,
+        # Relative POSIX path is what pipeline.run/regen expect for
+        # voice_sample/music_track, and what PetProfile.media.assets[].url uses.
+        "path": f"storage/assets/{pet_id}/{path.name}",
+        "kind": ASSET_KIND_BY_SUFFIX.get(path.suffix.lower(), "other"),
+        "size_bytes": path.stat().st_size,
+    }
+
+
+def _unique_target(directory: Path, filename: str) -> Path:
+    stem, suffix = Path(filename).stem, Path(filename).suffix
+    candidate = directory / filename
+    counter = 1
+    while candidate.exists():
+        candidate = directory / f"{stem}-{counter}{suffix}"
+        counter += 1
+    return candidate
+
+
+@app.get("/api/pets/{pet_id}/assets")
+def api_list_assets(pet_id: str):
+    directory = _pet_asset_dir(pet_id)
+    if not directory.is_dir():
+        return []
+    return [
+        _asset_entry(p, pet_id)
+        for p in sorted(directory.iterdir())
+        if p.is_file() and p.suffix.lower() in ASSET_KIND_BY_SUFFIX
+    ]
+
+
+@app.post("/api/pets/{pet_id}/assets")
+def api_upload_asset(pet_id: str, file: UploadFile = _UPLOADED_FILE):
+    """Take a file the reviewer picked in their OS file dialog and store it
+    under storage/assets/<pet_id>/, returning the relative path the rest of the
+    pipeline uses. The browser never exposes the real local path of a picked
+    file, so uploading is what makes 'pick a file on my computer' usable at
+    all — the UI then works with the stored copy."""
+    directory = _pet_asset_dir(pet_id, create=True)
+
+    raw_name = Path(file.filename or "").name
+    suffix = Path(raw_name).suffix.lower()
+    if suffix not in ASSET_KIND_BY_SUFFIX:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"不支援的檔案格式 {suffix or raw_name!r}，"
+                f"可用：{', '.join(sorted(ASSET_KIND_BY_SUFFIX))}"
+            ),
+        )
+    safe_stem = _UNSAFE_FILENAME_CHARS.sub("_", Path(raw_name).stem).strip("._") or "asset"
+    target = _unique_target(directory, f"{safe_stem}{suffix}")
+
+    try:
+        with open(target, "wb") as out:
+            shutil.copyfileobj(file.file, out, length=1024 * 1024)
+            if out.tell() > MAX_ASSET_BYTES:
+                raise ValueError(f"檔案超過上限 {MAX_ASSET_BYTES // (1024 * 1024)}MB")
+    except (OSError, ValueError) as e:
+        target.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=f"上傳失敗：{e}") from e
+    finally:
+        file.file.close()
+
+    return _asset_entry(target, pet_id)
 
 
 class GenerateRequest(BaseModel):
@@ -172,5 +305,11 @@ def api_get_job_video(job_id: int):
         raise HTTPException(status_code=404, detail=f"Output file missing: {path}")
     return FileResponse(path, media_type="video/mp4")
 
+
+# Uploaded media, read-only, so the profile editor can show photo thumbnails
+# instead of bare filenames. Serves storage/assets/ only — generated output
+# still goes through /api/jobs/{id}/video.
+config.ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/media", StaticFiles(directory=config.ASSETS_DIR), name="media")
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
