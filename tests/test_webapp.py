@@ -298,3 +298,43 @@ def test_list_profile_files_returns_json_filenames(client):
         assert f"{TEST_PET_ID}.json" in response.json()
     finally:
         profile_path.unlink(missing_ok=True)
+
+
+def test_generate_on_unknown_pet_returns_404_without_starting_a_task(client):
+    """Bad input is rejected on the request, not surfaced a minute later as a
+    failed background task."""
+    from webapp import tasks
+
+    response = client.post("/api/pets/PET-DOES-NOT-EXIST/generate", json={"style": "cute"})
+
+    assert response.status_code == 404
+    assert tasks.running_task() is None
+
+
+def test_get_unknown_task_returns_404(client):
+    assert client.get("/api/tasks/nope").status_code == 404
+
+
+def test_generate_while_another_task_runs_returns_409(client):
+    """The UI needs a clear 'already busy' answer instead of two runs fighting
+    over the GPU."""
+    import threading
+
+    from webapp import tasks
+
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+    release = threading.Event()
+    tasks.start_task(
+        kind="generate",
+        pet_id="PET-OTHER",
+        label="正在跑的工作",
+        work=lambda on_progress: release.wait(timeout=5) and {},
+    )
+    try:
+        response = client.post(f"/api/pets/{TEST_PET_ID}/generate", json={"style": "cute"})
+        assert response.status_code == 409
+        assert "正在跑的工作" in response.json()["detail"]
+    finally:
+        release.set()
+        with tasks._lock:
+            tasks._tasks.clear()

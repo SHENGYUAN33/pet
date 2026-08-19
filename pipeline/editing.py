@@ -18,8 +18,21 @@ FRAME_HEIGHT = 1920
 FRAME_RATE = 25
 
 
-def _escape_drawtext(text: str) -> str:
-    return text.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+def _write_subtitle_file(text: str, output_path: str) -> Path:
+    """Put the subtitle in a sidecar file for drawtext's textfile= option
+    instead of inlining it in the filtergraph.
+
+    Inlining meant escaping the same string for three nested parsers
+    (filtergraph, filter options, drawtext), and getting it wrong broke the
+    whole render: an apostrophe closed the quoted section early, after which
+    the next comma in an LLM-written subtitle ("I'm Yuanbao, a playful
+    kitty!") read as a filter separator and FFmpeg failed with "No such
+    filter". With textfile= only the path is part of the filter string, and
+    subtitle text — which is model-generated and reviewer-editable, i.e.
+    never under our control — needs no escaping at all."""
+    path = Path(output_path).with_suffix(".subtitle.txt")
+    path.write_text(text, encoding="utf-8")
+    return path
 
 
 def _escape_filter_path(path: str) -> str:
@@ -60,9 +73,13 @@ def build_scene_clip(
         # loop so -t below can always fill the full scene length.
         video_input = ["-stream_loop", "-1", "-i", visual_path]
 
+    subtitle_file = _write_subtitle_file(subtitle_text, output_path)
     drawtext = (
         f"drawtext=fontfile='{_escape_filter_path(config.DRAWTEXT_FONT_FILE)}':"
-        f"text='{_escape_drawtext(subtitle_text)}':"
+        f"textfile='{_escape_filter_path(str(subtitle_file))}':"
+        # expansion=none: subtitle text is copy, not a template — a literal
+        # "%" or "{" in it must not be interpreted by drawtext.
+        "expansion=none:"
         "fontcolor=white:fontsize=54:box=1:boxcolor=black@0.5:boxborderw=12:"
         "x=(w-text_w)/2:y=h-260"
     )

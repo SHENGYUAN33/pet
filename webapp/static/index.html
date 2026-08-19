@@ -458,6 +458,17 @@ textarea.auto { min-height: 76px; resize: vertical; font-family: inherit; }
 @keyframes spin { to { transform: rotate(360deg); } }
 #busy .what { font-weight: 650; }
 #busy .elapsed { color: var(--text-faint); font-size: 12.5px; margin-top: 4px; }
+#busy .box { max-width: 380px; }
+.bar {
+  height: 7px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  margin: 12px 0 2px;
+}
+.bar span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .4s ease; }
+#task-chip { border: 1px solid transparent; }
 
 .status-line { font-size: 12.5px; margin-top: 8px; color: var(--text-dim); min-height: 18px; }
 .status-line.err { color: var(--danger); }
@@ -470,6 +481,7 @@ textarea.auto { min-height: 76px; resize: vertical; font-family: inherit; }
 <header class="topbar">
   <div class="brand">🐾 寵物領養影片工作台<span>Pet Adoption Video · 審核工具</span></div>
   <div class="spacer"></div>
+  <button type="button" id="task-chip" class="badge accent" hidden style="cursor:pointer"></button>
   <div id="current-chip" class="badge accent" hidden></div>
 </header>
 
@@ -728,7 +740,7 @@ textarea.auto { min-height: 76px; resize: vertical; font-family: inherit; }
           </details>
 
           <button type="submit" class="primary">產生影片</button>
-          <p class="hint" style="margin-top:8px">同步執行，跑完 LLM／TTS／FFmpeg 才會回應，大約 10–60 秒。</p>
+          <p class="hint" style="margin-top:8px">在背景執行，畫面會顯示進度；一般 10–60 秒，開了 AI 動態化會久很多（每個鏡頭數分鐘）。可以關掉進度視窗繼續看別的，跑完會通知。</p>
         </form>
       </div>
 
@@ -811,7 +823,9 @@ textarea.auto { min-height: 76px; resize: vertical; font-family: inherit; }
 <div id="busy"><div class="box">
   <div class="spinner"></div>
   <div class="what" id="busy-what">處理中…</div>
+  <div class="bar" id="busy-bar" hidden><span id="busy-bar-fill"></span></div>
   <div class="elapsed" id="busy-elapsed">0 秒</div>
+  <button type="button" id="busy-hide" hidden style="margin-top:14px">在背景繼續跑，我先看別的</button>
 </div></div>
 
 <script>
@@ -836,18 +850,148 @@ function toast(text, kind) {
 }
 
 let busyTimer = null;
+let busyStarted = 0;
+
+function fmtElapsed(seconds) {
+  return seconds < 60
+    ? seconds + " 秒"
+    : Math.floor(seconds / 60) + " 分 " + String(seconds % 60).padStart(2, "0") + " 秒";
+}
+
+/** Indeterminate overlay for short blocking work (uploads). */
 function busy(what) {
+  busyStarted = Date.now();
   $("busy-what").textContent = what;
+  $("busy-bar").hidden = true;
+  $("busy-hide").hidden = true;
   $("busy-elapsed").textContent = "0 秒";
   $("busy").classList.add("on");
-  const started = Date.now();
+  clearInterval(busyTimer);
   busyTimer = setInterval(() => {
-    $("busy-elapsed").textContent = Math.round((Date.now() - started) / 1000) + " 秒";
+    $("busy-elapsed").textContent = fmtElapsed(Math.round((Date.now() - busyStarted) / 1000));
   }, 1000);
 }
 function unbusy() {
   clearInterval(busyTimer);
+  busyTimer = null;
   $("busy").classList.remove("on");
+}
+
+/* ---------- background generation tasks ----------
+   Generation runs on the server in the background (webapp/tasks.py) and the
+   browser polls for progress, so a long Image-to-Video run doesn't leave the
+   page frozen on a spinner with no idea how far along it is. The overlay can
+   be dismissed — polling (and the run itself) continues either way, and a
+   reload re-attaches to whatever is still running. */
+const POLL_INTERVAL_MS = 1500;
+let activeTask = null;
+let pollTimer = null;
+
+function taskOverlay(task) {
+  busyStarted = task.created_at * 1000;
+  $("busy-what").textContent = task.label;
+  $("busy-bar").hidden = false;
+  $("busy-hide").hidden = false;
+  $("busy").classList.add("on");
+  clearInterval(busyTimer);
+  busyTimer = setInterval(() => {
+    $("busy-elapsed").textContent = fmtElapsed(Math.round((Date.now() - busyStarted) / 1000));
+  }, 1000);
+  renderTaskProgress(task);
+}
+
+function renderTaskProgress(task) {
+  const percent = Math.round(task.progress * 100);
+  $("busy-what").textContent = task.label + " — " + task.message;
+  $("busy-bar-fill").style.width = percent + "%";
+  $("busy-elapsed").textContent =
+    fmtElapsed(Math.round(Date.now() / 1000 - task.created_at)) + " · " + percent + "%";
+  const chip = $("task-chip");
+  chip.hidden = false;
+  chip.textContent = "⏳ " + task.label + " " + percent + "%";
+}
+
+function trackTask(task, opts) {
+  activeTask = task;
+  setGenerationFormsBusy(true);
+  if (!opts || !opts.background) taskOverlay(task);
+  else renderTaskProgress(task);
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(pollTask, POLL_INTERVAL_MS);
+}
+
+async function pollTask() {
+  if (!activeTask) return;
+  let task;
+  try {
+    task = await api("/api/tasks/" + activeTask.task_id);
+  } catch (err) {
+    // Server restarted or the task was pruned — stop polling rather than
+    // spamming a dead endpoint; the generated video (if it finished) still
+    // shows up in 生成歷程 after a reload.
+    finishTask({ status: "error", error: "無法取得進度：" + err.message, pet_id: activeTask.pet_id });
+    return;
+  }
+  if (task.status === "running") {
+    activeTask = task;
+    renderTaskProgress(task);
+    pollTimer = setTimeout(pollTask, POLL_INTERVAL_MS);
+    return;
+  }
+  finishTask(task);
+}
+
+async function finishTask(task) {
+  clearTimeout(pollTimer);
+  activeTask = null;
+  unbusy();
+  $("task-chip").hidden = true;
+  setGenerationFormsBusy(false);
+
+  if (task.status === "done") {
+    const jobId = (task.result || {}).job_id;
+    toast("完成！新版本 Job " + jobId, "ok");
+    if (jobId != null) playingJobId = jobId;
+    if (task.pet_id) await selectPet(task.pet_id, true);
+  } else {
+    toast("失敗：" + (task.error || "未知錯誤"), "err");
+  }
+}
+
+function setGenerationFormsBusy(isBusy) {
+  for (const form of ["generate-form", "regenerate-form"]) {
+    const btn = $(form).querySelector("button[type=submit]");
+    if (btn) {
+      btn.disabled = isBusy;
+      btn.textContent = isBusy
+        ? "正在執行中…"
+        : form === "generate-form"
+          ? "產生影片"
+          : "重新生成這個鏡頭";
+    }
+  }
+}
+
+$("busy-hide").addEventListener("click", () => {
+  clearInterval(busyTimer);
+  $("busy").classList.remove("on");
+});
+$("task-chip").addEventListener("click", () => {
+  if (activeTask) taskOverlay(activeTask);
+});
+
+/** After a reload, re-attach to a run that is still going. */
+async function attachRunningTask() {
+  let running;
+  try {
+    running = (await api("/api/tasks")).find((t) => t.status === "running");
+  } catch (err) {
+    return;
+  }
+  if (running) {
+    trackTask(running, { background: true });
+    toast("目前有一個「" + running.label + "」正在執行中", "ok");
+  }
 }
 
 function setLine(id, text, kind) {
@@ -1181,23 +1325,15 @@ $("generate-form").addEventListener("submit", async (e) => {
     video_provider: form.get("video_provider"),
     animate_prompt: form.get("animate_prompt") || null,
   };
-  const btn = e.target.querySelector("button[type=submit]");
-  btn.disabled = true;
-  busy("正在產生影片（LLM → TTS → FFmpeg）…");
   try {
-    const data = await api("/api/pets/" + encodeURIComponent(currentPetId) + "/generate", {
+    const task = await api("/api/pets/" + encodeURIComponent(currentPetId) + "/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    toast("完成！新版本 Job " + data.job_id, "ok");
-    playingJobId = data.job_id;
-    await selectPet(currentPetId, true);
+    trackTask(task);
   } catch (err) {
-    toast("生成失敗：" + err.message, "err");
-  } finally {
-    unbusy();
-    btn.disabled = false;
+    toast("無法開始生成：" + err.message, "err");
   }
 });
 
@@ -1219,23 +1355,15 @@ $("regenerate-form").addEventListener("submit", async (e) => {
     video_provider: form.get("video_provider"),
     animate_prompt: form.get("animate_prompt") || null,
   };
-  const btn = e.target.querySelector("button[type=submit]");
-  btn.disabled = true;
-  busy("正在重生鏡頭 " + sceneId + "（不重跑 LLM）…");
   try {
-    const data = await api("/api/jobs/" + jobId + "/regenerate-scene", {
+    const task = await api("/api/jobs/" + jobId + "/regenerate-scene", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    toast("完成！新版本 Job " + data.job_id + "（原版本保留）", "ok");
-    playingJobId = data.job_id;
-    if (currentPetId) await selectPet(currentPetId, true);
+    trackTask(task);
   } catch (err) {
-    toast("重生失敗：" + err.message, "err");
-  } finally {
-    unbusy();
-    btn.disabled = false;
+    toast("無法開始重生：" + err.message, "err");
   }
 });
 
@@ -1686,7 +1814,7 @@ async function loadProfileFiles() {
 document.querySelectorAll(".tags").forEach(initTagEditor);
 document.querySelectorAll(".filepick").forEach(buildFilePick);
 loadProfileFiles();
-loadPets();
+loadPets().then(attachRunningTask);
 </script>
 
 </body>

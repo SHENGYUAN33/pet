@@ -6,6 +6,7 @@ import uuid
 from pipeline import config
 from pipeline.fact_check import find_missing_disclosures
 from pipeline.pet_repo import get_generation_job, get_pet, record_generation_job
+from pipeline.progress import ProgressCallback, noop, scaled
 from pipeline.qa import validate_script_structure
 from pipeline.rendering import render_script
 
@@ -46,6 +47,7 @@ def regenerate_scene(
     animate: bool = False,
     video_provider: str = "svd",
     animate_prompt: str | None = None,
+    on_progress: ProgressCallback = noop,
 ) -> tuple[str, int]:
     """Re-render a whole video from job_id's script with one scene patched,
     without re-running script generation (the LLM step) — the actually
@@ -57,6 +59,7 @@ def regenerate_scene(
     original generation used them. Returns (output_path, new_job_id); the
     new job's parent_job_id points back to job_id, and the original job's
     output file is left untouched."""
+    on_progress("讀取原始版本", 0.02)
     job = get_generation_job(job_id)
     if job is None:
         raise ValueError(f"No generation job found with id {job_id}")
@@ -92,8 +95,10 @@ def regenerate_scene(
         animate_scenes={scene_id} if animate else None,
         video_provider=video_provider,
         animate_prompt=animate_prompt,
+        on_progress=scaled(on_progress, 0.05, 0.98),
     )
 
+    on_progress("寫入生成紀錄", 0.99)
     new_job_id = record_generation_job(
         profile.pet_id,
         style=job["style"],

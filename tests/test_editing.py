@@ -207,3 +207,21 @@ def test_mix_narration_with_music_matches_narration_duration(tmp_path):
     )
 
     assert abs(_duration(out) - 6.0) < DURATION_TOLERANCE
+
+
+def test_build_scene_clip_survives_filtergraph_metacharacters_in_subtitle(sample_photo, tmp_path):
+    """Regression test: subtitles are LLM-written and reviewer-editable, so
+    they routinely contain characters that used to break the filtergraph —
+    an apostrophe closed drawtext's quoted text early and the following comma
+    was then read as a filter separator ("No such filter"), failing the whole
+    render. Nothing here may need escaping by the caller."""
+    out = tmp_path / "scene.mp4"
+
+    build_scene_clip(
+        visual_path=str(sample_photo),
+        duration=2.0,
+        subtitle_text=r"Meow! I'm 元寶, a playful kitty: 100% 好動 [test]; \o/",
+        output_path=str(out),
+    )
+
+    assert abs(_duration(out) - 2.0) < DURATION_TOLERANCE

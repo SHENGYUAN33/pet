@@ -5,6 +5,7 @@ import re
 
 from pipeline import config
 from pipeline.profile import PetProfile
+from pipeline.progress import ProgressCallback, noop
 from providers.base import LLMProvider
 
 # Matches the three narrative styles from docs/architecture.md §2
@@ -103,11 +104,23 @@ def generate_script(
 
 
 def generate_all_styles(
-    profile: PetProfile, llm: LLMProvider, *, duration: int = 30
+    profile: PetProfile,
+    llm: LLMProvider,
+    *,
+    duration: int = 30,
+    on_progress: ProgressCallback = noop,
 ) -> dict[str, dict]:
     """Generate all three narrative styles for human review (see
-    docs/architecture.md §2 — never publish a single auto-picked version)."""
-    return {
-        style: generate_script(profile, llm, style=style, duration=duration)
-        for style in SCRIPT_STYLES
-    }
+    docs/architecture.md §2 — never publish a single auto-picked version).
+
+    Each style is one LLM call with no intermediate signal, so per-style
+    reporting is the finest progress this stage can offer — worth doing
+    anyway, since it's the slowest part of a default (no-I2V) run."""
+    scripts = {}
+    for index, style in enumerate(SCRIPT_STYLES):
+        on_progress(
+            f"產生腳本 {index + 1}/{len(SCRIPT_STYLES)}（{style}）", index / len(SCRIPT_STYLES)
+        )
+        scripts[style] = generate_script(profile, llm, style=style, duration=duration)
+    on_progress("腳本產生完成", 1.0)
+    return scripts

@@ -6,10 +6,11 @@ through the existing pipeline.run / pipeline.regen / pipeline.pet_repo
 functions instead of the CLI. Business logic stays in pipeline/ — this
 module is a thin HTTP wrapper, nothing here re-implements generation logic.
 
-Generation requests are handled synchronously (the request blocks until
-FFmpeg/TTS/the LLM finish, tens of seconds). There is no async Job state
-machine yet (see CLAUDE.md) — a real multi-user deployment would need a
-background task queue, deliberately out of scope for this slice.
+Generation runs on a background thread (webapp/tasks.py) and the request
+returns a task_id immediately, because the web UI is the only interface
+non-technical reviewers have and an Image-to-Video run can take minutes. It
+is still not the persisted async Job state machine of
+docs/architecture.md §10 — task state lives in this process's memory.
 """
 
 from __future__ import annotations
@@ -27,8 +28,10 @@ from pydantic import BaseModel, ValidationError
 from pipeline import config
 from pipeline.pet_repo import get_generation_job, get_pet, list_generation_jobs, list_pets, save_pet
 from pipeline.profile import PetProfile
+from pipeline.progress import ProgressCallback
 from pipeline.regen import regenerate_scene
 from pipeline.run import generate_video
+from webapp import tasks
 
 app = FastAPI(title="Pet Adoption Video — Review Tool")
 
@@ -246,9 +249,16 @@ def api_save_profile(pet_id: str, profile: PetProfile):
     return {"pet_id": profile.pet_id, "name": profile.name}
 
 
-@app.post("/api/pets/{pet_id}/generate")
+@app.post("/api/pets/{pet_id}/generate", status_code=202)
 def api_generate(pet_id: str, req: GenerateRequest):
-    try:
+    """Start a generation run and return its task_id — poll /api/tasks/{id}
+    for progress. Inputs that are already knowable as wrong (unknown pet) are
+    rejected here rather than inside the task, so the reviewer gets an
+    immediate error instead of a task that fails a minute later."""
+    if get_pet(pet_id) is None:
+        raise HTTPException(status_code=404, detail=f"No pet found with id {pet_id!r}")
+
+    def work(on_progress: ProgressCallback) -> dict:
         output_path, job_id = generate_video(
             pet_id=pet_id,
             voice_sample=req.voice_sample,
@@ -258,15 +268,20 @@ def api_generate(pet_id: str, req: GenerateRequest):
             animate_scenes=set(req.animate_scenes) if req.animate_scenes else None,
             video_provider=req.video_provider,
             animate_prompt=req.animate_prompt,
+            on_progress=on_progress,
         )
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
-    return {"output_path": output_path, "job_id": job_id}
+        return {"output_path": output_path, "job_id": job_id}
+
+    return _start(kind="generate", pet_id=pet_id, label="產生新影片", work=work)
 
 
-@app.post("/api/jobs/{job_id}/regenerate-scene")
+@app.post("/api/jobs/{job_id}/regenerate-scene", status_code=202)
 def api_regenerate_scene(job_id: int, req: RegenerateSceneRequest):
-    try:
+    job = get_generation_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"No generation job found with id {job_id}")
+
+    def work(on_progress: ProgressCallback) -> dict:
         output_path, new_job_id = regenerate_scene(
             job_id,
             req.scene_id,
@@ -278,10 +293,41 @@ def api_regenerate_scene(job_id: int, req: RegenerateSceneRequest):
             animate=req.animate,
             video_provider=req.video_provider,
             animate_prompt=req.animate_prompt,
+            on_progress=on_progress,
         )
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
-    return {"output_path": output_path, "job_id": new_job_id}
+        return {"output_path": output_path, "job_id": new_job_id}
+
+    return _start(
+        kind="regenerate",
+        pet_id=job["pet_id"],
+        label=f"重生 Job {job_id} 的鏡頭 {req.scene_id}",
+        work=work,
+    )
+
+
+def _start(**kwargs) -> dict:
+    try:
+        return tasks.start_task(**kwargs)
+    except tasks.TaskBusyError as e:
+        # One at a time: generation saturates the GPU/CPU, so a second
+        # concurrent run would slow both down rather than finish sooner.
+        raise HTTPException(
+            status_code=409,
+            detail=f"目前正在執行「{e}」，請等它跑完再送出下一個。",
+        ) from e
+
+
+@app.get("/api/tasks")
+def api_list_tasks(pet_id: str | None = None):
+    return tasks.list_tasks(pet_id)
+
+
+@app.get("/api/tasks/{task_id}")
+def api_get_task(task_id: str):
+    task = tasks.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"No task found with id {task_id!r}")
+    return task
 
 
 @app.get("/api/jobs/{job_id}")

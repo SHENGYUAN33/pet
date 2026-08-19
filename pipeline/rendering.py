@@ -14,6 +14,7 @@ from pipeline.editing import (
 from pipeline.i2v import animate_photo, get_video_provider
 from pipeline.narration import silence_scenes, synthesize_scenes
 from pipeline.profile import PetProfile
+from pipeline.progress import ProgressCallback, noop
 from providers.tts.xtts_provider import XTTSProvider
 
 
@@ -46,6 +47,7 @@ def render_script(
     animate_scenes: set[int] | None = None,
     video_provider: str = "svd",
     animate_prompt: str | None = None,
+    on_progress: ProgressCallback = noop,
 ) -> Path:
     """Render a single already-selected script into a final MP4 inside
     work_dir: narration/silence per scene, per-scene video clips (real
@@ -63,11 +65,16 @@ def render_script(
     scene for prompt-conditioned providers (CogVideoX, Wan); ignored by
     providers that aren't text-conditioned (SVD). A single shared prompt
     rather than a per-scene mapping, since callers only ever animate one
-    scene at a time today (pipeline.regen.regenerate_scene)."""
+    scene at a time today (pipeline.regen.regenerate_scene).
+
+    on_progress reports which stage is running (see pipeline/progress.py);
+    the CLI leaves it at the no-op default, the web UI uses it to drive a
+    progress bar instead of a blank spinner."""
     work_dir.mkdir(parents=True, exist_ok=True)
     animate_scenes = animate_scenes or set()
 
     if voice_sample:
+        on_progress("產生旁白配音（TTS）", 0.0)
         tts = XTTSProvider()
         audio_paths = synthesize_scenes(
             script, tts, voice_profile=voice_sample, output_dir=work_dir / "audio"
@@ -75,15 +82,30 @@ def render_script(
     else:
         audio_paths = silence_scenes(script, work_dir / "audio")
 
+    if animate_scenes:
+        on_progress(f"載入 {video_provider} 影片生成模型", 0.15)
     i2v_provider = get_video_provider(video_provider) if animate_scenes else None
 
     video_clip_paths = []
     ordered_audio_paths = []
-    for scene in script["scenes"]:
+    scene_count = len(script["scenes"])
+    # Scene rendering owns 0.2-0.9 of this stage; the surrounding TTS and
+    # concat/mux steps are comparatively quick.
+    for index, scene in enumerate(script["scenes"]):
         visual_path = _resolve_visual_path(profile, scene["visual_source"])
         duration = scene["end"] - scene["start"]
 
-        if scene["scene_id"] in animate_scenes and visual_path.suffix.lower() in PHOTO_EXTENSIONS:
+        scene_fraction = 0.2 + 0.7 * (index / scene_count)
+        animated = (
+            scene["scene_id"] in animate_scenes and visual_path.suffix.lower() in PHOTO_EXTENSIONS
+        )
+        on_progress(
+            f"鏡頭 {index + 1}/{scene_count}"
+            + (f"：{video_provider} 動態化中（比較久）" if animated else "：剪輯與字幕"),
+            scene_fraction,
+        )
+
+        if animated:
             i2v_path = work_dir / f"scene_{scene['scene_id']}_i2v.mp4"
             animate_photo(
                 str(visual_path),
@@ -112,6 +134,7 @@ def render_script(
     # concatenated video's real length matches this sum, not the declared end time.
     total_duration = sum(scene["end"] - scene["start"] for scene in script["scenes"])
 
+    on_progress("合併鏡頭與音訊", 0.9)
     concatenated_video = concat_video_only(video_clip_paths, str(work_dir / "video_only.mp4"))
     concatenated_narration = concat_audio(ordered_audio_paths, str(work_dir / "narration_full.wav"))
 
@@ -127,4 +150,5 @@ def render_script(
 
     final_path = work_dir / f"{profile.pet_id}_{script.get('style', 'video')}_{total_duration}s.mp4"
     mux_video_audio(concatenated_video, final_audio, str(final_path))
+    on_progress("影片輸出完成", 1.0)
     return final_path

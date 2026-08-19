@@ -7,6 +7,7 @@ import uuid
 from pipeline import config
 from pipeline.fact_check import find_missing_disclosures
 from pipeline.pet_repo import get_pet, record_generation_job
+from pipeline.progress import ProgressCallback, noop, scaled
 from pipeline.qa import validate_script_structure
 from pipeline.rendering import render_script
 from pipeline.script_gen import SCRIPT_STYLES, generate_all_styles
@@ -23,12 +24,16 @@ def generate_video(
     animate_scenes: set[int] | None = None,
     video_provider: str = "svd",
     animate_prompt: str | None = None,
+    on_progress: ProgressCallback = noop,
 ) -> tuple[str, int]:
     """voice_sample=None runs without narration (silent placeholder audio
     per scene) — useful for testing script generation and video assembly
     before a TTS voice reference is available. music_track=None skips
     background music (narration/silence only). Returns (output_path, job_id)
-    — job_id can later be passed to pipeline.regen.regenerate_scene()."""
+    — job_id can later be passed to pipeline.regen.regenerate_scene().
+    on_progress (see pipeline/progress.py) reports the current stage; the
+    CLI leaves it at the no-op default."""
+    on_progress("讀取寵物資料", 0.01)
     profile = get_pet(pet_id)
     if profile is None:
         raise ValueError(
@@ -37,7 +42,11 @@ def generate_video(
         )
 
     llm = OllamaLLMProvider()
-    scripts = generate_all_styles(profile, llm, duration=duration)
+    # Script generation is the slowest step of a default (no-I2V) run, so it
+    # reports per style rather than as one opaque block.
+    scripts = generate_all_styles(
+        profile, llm, duration=duration, on_progress=scaled(on_progress, 0.05, 0.33)
+    )
 
     # storage/output/<pet_id>/scripts/ holds the latest generated scripts
     # for human browsing, shared across runs — the per-job renders below
@@ -69,6 +78,7 @@ def generate_video(
             json.dumps(s, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
+    on_progress("事實與結構檢查", 0.34)
     script = scripts[style]
 
     work_dir = config.OUTPUT_DIR / profile.pet_id / f"gen_{uuid.uuid4().hex[:8]}"
@@ -81,8 +91,10 @@ def generate_video(
         animate_scenes=animate_scenes,
         video_provider=video_provider,
         animate_prompt=animate_prompt,
+        on_progress=scaled(on_progress, 0.35, 0.98),
     )
 
+    on_progress("寫入生成紀錄", 0.99)
     job_id = record_generation_job(
         profile.pet_id,
         style=style,
