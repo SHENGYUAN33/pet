@@ -45,7 +45,7 @@
 |---|---|---|
 | LLM（腳本/文案/QA判斷） | Claude / GPT-4o | Llama 3.x、Qwen2.5、Mistral（vLLM） |
 | VLM（素材檢查/特徵抽取） | GPT-4V / Claude Vision | Qwen2-VL、LLaVA-NeXT、CogVLM |
-| 影片生成 I2V/T2V | Runway、Google Veo、Kling、Luma | Stable Video Diffusion、CogVideoX、Open-Sora、Mochi 1 |
+| 影片生成 I2V/T2V | Runway、Google Veo、Kling、Luma | Stable Video Diffusion、CogVideoX、**Wan2.2**、Open-Sora、Mochi 1 |
 | 圖像生成/增強 | Midjourney API、GPT-Image | SDXL / Flux.1、Real-ESRGAN |
 | TTS 旁白 | ElevenLabs、Azure/Google TTS | Coqui XTTS-v2、F5-TTS、GPT-SoVITS、Piper |
 | 內容審核 | OpenAI Moderation API | LlamaGuard 3、Detoxify |
@@ -61,12 +61,16 @@
 
 素材組成建議比例（避免一開始做「完全生成式影片」）：60% 真實影片剪輯 / 20% 照片動態化 / 10% 字幕與貼圖 / 10% AI 生成場景。
 
-目前所在階段：**MVP 開發中（第三個切片：Image-to-Video + 簡易 FastAPI/前端完成）**。
+目前所在階段：**MVP 開發中（第三個切片：Image-to-Video〔SVD／CogVideoX／Wan2.2〕＋ 簡易 FastAPI/前端完成）**。
 
 - 第一個切片（多寵物管理／PostgreSQL 資料層）：`pipeline/db.py`／`pipeline/models.py`／`pipeline/pet_repo.py`，管理 CLI `pipeline/manage.py`（`init-db`／`import-profile`／`list-pets`／`show-pet`）
 - 第二個切片（分鏡編輯／單鏡頭重生）：渲染邏輯抽到 `pipeline/rendering.py`（`render_script`，`generate_video` 與 `regenerate_scene` 共用，不重複寫一次），每次生成都在 `storage/output/<pet_id>/gen_<8碼token>/` 有自己的子資料夾（不再共用同一層、不會互相覆蓋鏡頭檔案）。`pipeline/regen.py` 提供 `apply_scene_overrides`（純函式）＋ `regenerate_scene`（patch 單一鏡頭素材/字幕/旁白後只重新渲染，不重跑 LLM），CLI 是 `pipeline/regenerate.py`。`GenerationJob` 現在存完整 `script_json`，`parent_job_id` 把重新生成的版本連回原始 job——**每次重生都是新的一筆紀錄，不覆蓋舊的**，原始輸出檔案與紀錄都保留供追溯。
-- 第三個切片（Image-to-Video＋簡易 FastAPI/前端）：
-  - **I2V（策略 B）**：`providers/base.py` 新增 `VideoGenerationProvider`，`providers/video/svd_provider.py`（SVD-XT）與 `providers/video/cogvideox_provider.py`（`CogVideoX-5b-I2V`——沒有官方 2B 的 I2V 檢查點）都已實作並可透過 `pipeline/i2v.py` 的 `get_video_provider()` 切換。`pipeline/rendering.py render_script()` 新增 `animate_scenes`/`video_provider` 參數：指定的照片鏡頭會先呼叫 I2V provider 產生暫存影片，再交給既有的 `build_scene_clip`（真實影片那條路徑：loop/裁切/固定fps）處理，沒有另外寫一套邏輯。`pipeline/run.py --animate-scenes 2,4`、`pipeline/regenerate.py --animate` 都可以用。**已在這張機器（RTX 5070 Ti，16GB VRAM）用元寶的照片跑過 SVD 手動 smoke test，確認真的能產生動態效果**；CogVideoX-5b-I2V 目前只實作了介面，還沒手動跑過（5B 模型在 16GB VRAM 上可能吃緊，需要時再驗證）。
+- 第三個切片（Image-to-Video＋簡易 FastAPI/前端，含後續的表單化 UI 與背景任務）：
+  - **I2V（策略 B）**：`providers/base.py` 新增 `VideoGenerationProvider`，目前有三個實作，透過 `pipeline/i2v.py` 的 `get_video_provider()` 以名稱切換（`svd`／`cogvideox`／`wan`）：
+    - `providers/video/svd_provider.py`（SVD-XT，diffusers 本機推論）——**已在這張機器（RTX 5070 Ti，16GB VRAM）用元寶的照片跑過手動 smoke test**，確實會動，但 SVD 沒有文字條件，prompt 對它是 no-op，動的多半是鏡頭/背景而不是主體。
+    - `providers/video/cogvideox_provider.py`（`CogVideoX-5b-I2V`——沒有官方 2B 的 I2V 檢查點）——只實作了介面，還沒手動跑過（5B 在 16GB VRAM 上吃緊，需要時再驗證）。
+    - `providers/video/wan_provider.py`（**Wan2.2 TI2V-5B，Apache 2.0**）——文字 prompt 真的能指揮「主體」動作，是目前品質/速度最平衡的選擇。走**本機自架的 ComfyUI 伺服器**（`vendor/comfyui/`，自己的 venv，`vendor/` 已 gitignore），不是 diffusers、也不是 Wan 官方 `generate.py`：兩條路都試過並排除（diffusers 的 I2V-A14B 約 118GB 裝不下、TI2V-5B 在 diffusers 沒有 I2V 支援、官方 generate.py 只有 bf16 未量化版約 500s/step）；ComfyUI ＋ FP8 量化檢查點實測約 25s/step，一顆鏡頭（5 秒、20 步）約 **8 分鐘**、VRAM 約 11GB。完整理由寫在 `pipeline/config.py` 的 `WAN_*` 註解區與 `wan_provider.py` docstring。**這個 provider 不會自己啟動 ComfyUI**（跟 rendering 不會自己啟 Ollama/PostgreSQL 一樣），啟動指令見 [STARTUP.md](STARTUP.md)。
+    `pipeline/rendering.py render_script()` 有 `animate_scenes`／`video_provider`／`animate_prompt` 參數：指定的照片鏡頭會先呼叫 I2V provider 產生暫存影片，再交給既有的 `build_scene_clip`（真實影片那條路徑：loop/裁切/固定 fps）處理，沒有另外寫一套邏輯。CLI 是 `pipeline/run.py --animate-scenes 2,4 --video-provider wan --animate-prompt "貓輕輕搖尾巴、抬頭看鏡頭"`、`pipeline/regenerate.py --animate --video-provider wan --animate-prompt ...`；網頁端對應 `GenerateRequest`／`RegenerateSceneRequest` 的 `animate_scenes`/`animate`、`video_provider`、`animate_prompt` 欄位。
   - **簡易 FastAPI/前端**：`webapp/main.py`（FastAPI，直接呼叫既有的 `pipeline.pet_repo`／`pipeline.run`／`pipeline.regen`，不重寫業務邏輯）＋ `webapp/static/index.html`（純 HTML/JS，無建置流程，不是架構文件最終目標的 React/Next.js）。**生成/重生改成背景執行**：`POST .../generate`、`POST .../regenerate-scene` 立刻回 202＋`task_id`，實際工作跑在 `webapp/tasks.py` 的背景執行緒，前端輪詢 `GET /api/tasks/{task_id}` 顯示進度條與目前步驟（腳本 1/3 → TTS → 鏡頭 n/m → 合併），可以關掉進度視窗繼續操作，重新整理頁面會用 `GET /api/tasks` 重新接上還在跑的工作。進度來源是 `pipeline/progress.py` 的 `on_progress` callback（CLI 不傳就是 no-op，行為不變）。**一次只跑一個**（生成會吃滿 GPU/CPU），第二個請求回 409。注意這仍**不是** docs/architecture.md §10 的持久化 Job 狀態機：task 狀態只存在 process 記憶體，重啟 server 會掉（但已完成的工作仍有 `GenerationJob` 紀錄）。網頁現在也能**從 `storage/profiles/` 底下的檔案路徑匯入 Profile**（`POST /api/pets/import-path`，路徑限制在 `storage/profiles/` 內＋ `PetProfile` pydantic 驗證，防止任意檔案讀取）和**直接編輯/新增 Pet Profile 的 JSON**（`PUT /api/pets/{pet_id}/profile`，同樣走 pydantic 驗證，upsert 語意跟 `pipeline.manage import-profile` 一致），對應測試在 `tests/test_webapp.py`。前端已做過一次介面改版（設計 token／深色模式、寵物清單搜尋、生成歷程版本卡片含 QA 警告、右側改成「產生新影片／單鏡頭重生」兩個分頁、選填欄位收進摺疊區、同步生成期間有計時的等待遮罩）；**單鏡頭重生改成用點選的**——先選版本再從鏡頭清單點一個鏡頭，不用自己記 job id/scene id，資料來源是新的 `GET /api/jobs/{job_id}`（回傳含 `script_json` 的完整 job 紀錄）。
   - **給非工程使用者的表單化 UI**：Pet Profile 不再只有 JSON textarea——`webapp/static/index.html` 現在是中文欄位表單（基本資料／健康狀態勾選／個性標籤 chip 編輯器／故事與領養條件／照片影片清單含縮圖／外觀特徵摺疊區），JSON 直編退居「進階」摺疊區（可「套用到上方表單」，但仍要按表單的儲存鈕才寫入 DB）。表單會保留 schema 中沒有對應 widget 的欄位再合併回去，不會靜默丟資料。**檔案路徑欄位改成用選的**：瀏覽器拿不到本機檔案的真實路徑，所以「從電腦選擇」＝開 OS 檔案對話框→上傳到 `storage/assets/<pet_id>/`→用存下來那份的相對路徑；新增 `POST /api/pets/{pet_id}/assets`（副檔名 allowlist、檔名淨化、同名不覆蓋、pet_id 先做字元檢查＋ `storage/assets/` 包含性檢查再查 DB）、`GET /api/pets/{pet_id}/assets`（列出已上傳檔案給下拉選單）、`GET /api/profile-files`（匯入表單改成下拉選單），照片縮圖走唯讀的 `/media` static mount。單鏡頭重生的「換素材」也從手打 asset_id 改成從該寵物素材下拉選。上傳需要先有 pet_id（新寵物要先存檔才能傳照片）。
 
@@ -77,7 +81,7 @@
 ### PoC 實作邊界（開源優先，對應規劃時的技術選型決策，MVP 階段陸續補上）
 - LLM：Ollama + Qwen2.5-7B-Instruct（`pipeline/config.py` 可透過 `.env` 覆寫模型/host）
 - TTS：Coqui XTTS-v2（zero-shot voice cloning，需一段參考語音 wav）
-- 影片生成 I2V：**已接**（SVD/CogVideoX，見上），只在明確指定 `animate_scenes`／`--animate` 時才用，預設仍是真實素材剪輯＋照片 Ken Burns（策略 A 優先，I2V 只補位）
+- 影片生成 I2V：**已接**（SVD／CogVideoX／Wan2.2，見上），只在明確指定 `animate_scenes`／`--animate` 時才用，預設仍是真實素材剪輯＋照片 Ken Burns（策略 A 優先，I2V 只補位）
 - VLM／音樂生成：仍刻意省略，素材品質檢查靠人工選片
 - 任務編排：仍是同步流程，Celery/Temporal 留到規模需要時才導入；資料庫用 PostgreSQL（見上）
 - Provider Adapter：LLM/TTS/I2V 都已有具體實作（`providers/llm/`、`providers/tts/`、`providers/video/`），但都還是「呼叫端寫死選哪個 provider」，還沒有 Router／依內容敏感度或成本自動切換，留到後續 MVP 切片
@@ -97,7 +101,7 @@
 - 每個生成的影片都須保留「素材與生成紀錄」（用了哪些 provider、prompt、seed、模型版本、審核結果），供事後追溯與合規查核
 - 人工審核層的退回機制須能標記「單一鏡頭重新生成」，不必整支影片重跑
 - 腳本/分鏡一律走結構化 JSON（見 docs/schemas/），不要用純文字文案當作腳本的唯一表示
-- 尚未有測試/建置指令可執行；一旦專案初始化出 package.json / pyproject.toml，回頭更新本文件的「常用指令」章節
+- 專案已有 `pyproject.toml`（`pytest` ＋ `ruff`，可選 extras：`dev`／`web`／`i2v`），指令見下方「常用指令」；尚未有 `package.json`（前端目前是無建置流程的純 HTML/JS）
 
 ## Rules & Constraints
 
@@ -115,7 +119,7 @@
 - **每個新功能／bug fix 都要有對應測試**（`tests/`，用 `pytest`），不接受無測試覆蓋的 pipeline 邏輯變更
 - **合併前必須通過 `ruff check` 與 `ruff format --check`**（`.claude/hooks/post-edit.sh` 會在每次 Edit/Write 後自動跑 `ruff check --fix` + `ruff format`，但送出前仍需確認乾淨）
 - **型別標註**：`pipeline/` 與 `providers/` 下的公開函式/方法一律加 type hints，資料結構優先用 `pydantic` model（對應 Pet Profile / Script schema），不用裸 `dict`
-- **不寫死 magic number／字串**：QA 加權評分門檻（80分）、5-7 鏡頭數量、3-6 秒單鏡頭長度等關鍵參數集中放在 config，不散落在各處程式碼
+- **不寫死 magic number／字串**：QA 加權評分門檻（80分）、5-7 鏡頭數量（`config.MIN_SCENES`／`MAX_SCENES`）、3-6 秒單鏡頭長度（`config.MIN_SCENE_DURATION`／`MAX_SCENE_DURATION`）、字幕字型（`config.DRAWTEXT_FONT_FILE`）、各 I2V provider 的模型檔名/步數/解析度（`config.SVD_*`／`COGVIDEOX_*`／`WAN_*`）等關鍵參數一律集中在 `pipeline/config.py`（可用 `.env` 覆寫），不散落在各處程式碼
 - **Provider Adapter 介面變更需保持向下相容**：輸入輸出 schema 不可隨意破壞既有呼叫端，新增能力優先用新方法/新欄位而非改變既有介面語意
 - **錯誤處理只在系統邊界做**：外部 API 呼叫、檔案 I/O、使用者輸入解析需要 try/except 並記錄可追溯的錯誤上下文；內部函式之間的呼叫信任呼叫端已驗證過的資料，不重複防禦
 
@@ -125,7 +129,7 @@
 # 環境設定：這個專案有自己的 .venv（見下方「開發環境」），每次開新的終端機都要先啟用
 source .venv/Scripts/activate   # Windows Git Bash；已建過就不用重跑 python -m venv
 pip install -e ".[dev]"
-cp .env.example .env   # 依需要調整 OLLAMA_MODEL / XTTS_MODEL_NAME / DATABASE_URL
+cp .env.example .env   # 依需要調整 OLLAMA_MODEL / XTTS_MODEL_NAME / DATABASE_URL / WAN_*
 
 # 確認 Ollama 模型已就緒（需先安裝並啟動 Ollama）
 ollama pull qwen2.5:7b-instruct
@@ -160,8 +164,13 @@ python -m pipeline.regenerate <job_id> <scene_id> \
 
 # Image-to-Video（需要 CUDA GPU；torch 要裝對應 CUDA 版本的 wheel，不能只 pip install torch）
 pip install torch --index-url https://download.pytorch.org/whl/cu128   # 依實際 GPU/CUDA 版本調整
-pip install -e ".[i2v]"
+pip install -e ".[i2v]"        # 只涵蓋 svd / cogvideox（diffusers 路線）
 python -m pipeline.regenerate <job_id> <scene_id> --animate --video-provider svd   # 或 cogvideox
+
+# Wan2.2（動作品質最好；走另一個常駐的 ComfyUI 伺服器，不吃本專案的 [i2v] extras）
+# 先照 STARTUP.md 啟動 vendor/comfyui（它有自己的 .venv），再：
+python -m pipeline.run --pet-id <pet_id> --animate-scenes 2,4 --video-provider wan --animate-prompt "貓輕輕搖尾巴、抬頭看鏡頭"
+python -m pipeline.regenerate <job_id> <scene_id> --animate --video-provider wan --animate-prompt "狗狗歪頭看鏡頭"
 
 # 簡易 FastAPI + 前端（無建置流程的純 HTML/JS，不是最終目標的 React/Next.js）
 pip install -e ".[web]"
@@ -171,4 +180,9 @@ uvicorn webapp.main:app --reload   # 開 http://localhost:8000（.venv 啟用後
 ### 開發環境（.venv，不要裝進全域 Python）
 這台機器上還有另一個獨立的 Python 3.12 安裝，PATH 上排在前面。一開始這個專案曾經誤裝進 miniconda 的 **base 全域環境**，導致裸打 `uvicorn`／`pytest` 等指令會抓到錯的 Python、找不到 `psycopg` 等套件。已改成專案自己的 `.venv`（`python -m venv .venv`，套件都裝在裡面）解決——**每次開新終端機工作前一定要先 `source .venv/Scripts/activate`**，啟用後裸指令（`python`、`pip`、`pytest`、`ruff`、`uvicorn`）都會正確指向 `.venv` 而不是全域環境或那個 Python 3.12 安裝。`.venv/` 已在 `.gitignore` 排除。
 
-素材放置慣例：`storage/assets/<pet_id>/`（原始照片/影片/語音樣本，對應 Profile 的 `media.assets[].url` 檔名）、`storage/output/<pet_id>/gen_<token>/`（每次生成/重生獨立的輸出子資料夾，含三種風格腳本 JSON、各鏡頭 clip、最終影片）。這兩個資料夾內容都被 `.gitignore` 排除，不會進版控。`storage/profiles/*.json` 是匯入資料庫用的格式範本，實際運作時 pipeline 讀的是資料庫，不是這個資料夾。
+素材放置慣例：`storage/assets/<pet_id>/`（原始照片/影片/語音樣本，對應 Profile 的 `media.assets[].url` 檔名；網頁上傳也是存到這裡，並透過唯讀的 `/media` mount 給前端顯示縮圖）、`storage/output/<pet_id>/gen_<token>/`（每次生成/重生獨立的輸出子資料夾，含三種風格腳本 JSON、各鏡頭 clip、最終影片）。這兩個資料夾內容都被 `.gitignore` 排除，不會進版控。`storage/profiles/*.json` 是匯入資料庫用的格式範本，實際運作時 pipeline 讀的是資料庫，不是這個資料夾。
+
+`vendor/`（整個目錄都在 `.gitignore` 內，**不進版控、需要時各自另外 clone/安裝**）：
+- `vendor/comfyui/`：Wan2.2 用的 ComfyUI 伺服器，**有自己的 `.venv`**，跟專案主要的 `.venv` 完全分開；啟動方式見 [STARTUP.md](STARTUP.md)。
+- `vendor/wan2.2/`：Wan 官方推論 repo，早期評估時用過，**目前的 `wan_provider.py` 已不再呼叫它**，留著只作為對照參考。
+因為 vendor 底下的 repo 各自帶自己的測試，`pyproject.toml` 用 `[tool.pytest.ini_options] testpaths = ["tests"]` 把 pytest 的搜集範圍限制在本專案的 `tests/`（ruff 不需要同樣處理，它預設會遵守 `.gitignore`）。

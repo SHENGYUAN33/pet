@@ -131,6 +131,7 @@ AI 不應把所有標籤塞進影片，而要萃取**最真實且最有吸引力
 - **適合**：眨眼、歪頭、輕微搖尾、呼吸、看鏡頭、緩慢前進
 - **不建議**：複雜奔跑、與人激烈互動、大幅轉身、多寵物交互、與原照差異過大的場景
 - 技術：商用可用 Runway（非同步 Image-to-Video API）、Google Veo（支援參考主體圖片維持外觀一致）；開源見第 7 節
+- **實作現況**：`providers/video/` 下已有三個開源實作可切換——SVD-XT（無文字條件，動的多半是鏡頭/背景）、CogVideoX-5b-I2V（僅實作介面，尚未實測）、Wan2.2 TI2V-5B（文字 prompt 能指揮主體動作，走本機自架 ComfyUI）。選用與硬體實測數據見 [CLAUDE.md](../CLAUDE.md) 與 `pipeline/config.py` 的 `WAN_*` 註解。
 
 ### 策略 C：可愛幻想場景
 例如寵物穿小領巾坐咖啡店、幻想露營、疊加愛心/星星特效。**必須在影片標示「部分畫面由 AI 創意生成」**，且幻想畫面不得用來暗示寵物的實際體型、行為能力或居住狀況。
@@ -170,7 +171,7 @@ AI 不應把所有標籤塞進影片，而要萃取**最真實且最有吸引力
 |---|---|---|
 | LLM（Profile 摘要/腳本/分鏡/QA 判斷） | Claude / GPT-4o | Llama 3.x、Qwen2.5、Mistral（vLLM 部署） |
 | VLM（照片內容/表情/姿勢/場景/品質分析） | GPT-4V / Claude Vision | Qwen2-VL、LLaVA-NeXT、CogVLM |
-| 影片生成 I2V/T2V | Runway、Google Veo、Kling、Luma | Stable Video Diffusion、CogVideoX、Open-Sora、Mochi 1 |
+| 影片生成 I2V/T2V | Runway、Google Veo、Kling、Luma | Stable Video Diffusion、CogVideoX、Wan2.2（Apache 2.0，文字 prompt 可指揮主體動作）、Open-Sora、Mochi 1 |
 | 圖像生成/增強 | Midjourney API、GPT-Image | SDXL / Flux.1、Real-ESRGAN |
 | TTS 旁白 | ElevenLabs、Azure/Google TTS | Coqui XTTS-v2、F5-TTS、GPT-SoVITS、Piper |
 | 內容審核 Moderation | OpenAI Moderation API | LlamaGuard 3、Detoxify |

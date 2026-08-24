@@ -6,4 +6,12 @@
 - 系統架構與 AI provider 策略：見 [CLAUDE.md](CLAUDE.md)
 - 詳細分層設計、旁白 pipeline、開發階段規劃：見 [docs/architecture.md](docs/architecture.md)
 
-目前階段：**MVP 開發中**——多寵物管理／PostgreSQL 資料層、分鏡編輯／單鏡頭重生、Image-to-Video（SVD/CogVideoX）、簡易 FastAPI + 網頁介面都已完成並驗證過。細節見 [CLAUDE.md](CLAUDE.md) 的「目前所在階段」。
+目前階段：**MVP 開發中**——以下都已完成並實際跑過：
+
+- 多寵物管理／PostgreSQL 資料層（`pipeline/manage.py` CLI）
+- 三種風格腳本（Ollama + Qwen2.5）、第一人稱旁白（Coqui XTTS-v2）、FFmpeg 合成與字幕燒錄
+- 分鏡編輯／單鏡頭重生（不重跑 LLM，每次重生留新紀錄不覆蓋舊的）
+- Image-to-Video 策略 B：**SVD／CogVideoX／Wan2.2** 三個可切換的開源 provider（Wan2.2 走本機 ComfyUI，文字 prompt 能指揮主體動作）
+- 簡易 FastAPI + 網頁介面：中文表單化的 Pet Profile 編輯、素材上傳、背景執行的生成/重生＋進度條、點選式單鏡頭重生
+
+尚未實作：VLM 素材檢查、音樂生成、Provider Router（自動切換）、docs/architecture.md §10 的持久化 Job 狀態機、社群發布與成效追蹤。細節見 [CLAUDE.md](CLAUDE.md) 的「目前所在階段」。

@@ -16,7 +16,7 @@
 
 ## 啟動 ComfyUI（只有要用 `--video-provider wan` 時才需要）
 
-Wan2.2 走的是獨立的 ComfyUI 伺服器（`vendor/comfyui/`，有自己的 `.venv`，不是專案主要的 `.venv`），要另開一個終端機視窗常駐執行：
+Wan2.2 走的是獨立的 ComfyUI 伺服器（`vendor/comfyui/`，有自己的 `.venv`，不是專案主要的 `.venv`）。⚠️ **`vendor/` 整個目錄都在 `.gitignore` 內、不進版控**，換一台機器 clone 這個 repo 後不會有它，要自己另外裝好 ComfyUI 並下載 `pipeline/config.py` 裡 `WAN_MODEL_FILE`／`WAN_VAE_FILE`／`WAN_T5_FILE` 指定的檢查點。裝好後另開一個終端機視窗常駐執行：
 
 ```powershell
 cd C:\Users\tkums\OneDrive\桌面\dogcat\vendor\comfyui
@@ -80,10 +80,14 @@ uvicorn webapp.main:app --reload
 ```
 http://localhost:8000
 ```
-左側會列出已匯入的寵物（目前是元寶），點下去可以：
-- 播放已生成的影片、看生成歷程
-- 填表單產生新影片（風格/時長/語音檔路徑/音樂路徑）
-- 針對單一鏡頭重新生成（換素材/字幕/旁白，或改用 AI 動態化 Image-to-Video）
+左側會列出已匯入的寵物（目前是元寶，上方有搜尋框），點下去可以：
+- 播放已生成的影片、看生成歷程（每個版本一張卡片，含 QA 警告）
+- **用中文表單編輯 Pet Profile**（基本資料／健康狀態／個性標籤／故事與領養條件／照片影片清單），JSON 直編收在「進階」摺疊區；也可以從 `storage/profiles/` 下拉選一份檔案匯入
+- **上傳照片/影片/語音樣本**：按「從電腦選擇」開檔案對話框，檔案會存到 `storage/assets/<pet_id>/`（要先存過這隻寵物、有 pet_id 才能上傳）
+- 填表單產生新影片（風格/時長/語音樣本/音樂，選填欄位收在摺疊區）
+- 針對單一鏡頭重新生成：先點一個版本，再從鏡頭清單點要改的鏡頭（不用自己記 job id / scene id），可換素材/字幕/旁白，或勾選 AI 動態化（Image-to-Video，可選 provider 與動作描述）
+
+生成與重生都是**背景執行**：按下去會立刻出現進度條（腳本 1/3 → TTS → 鏡頭 n/m → 合併），可以關掉進度視窗繼續做別的事，重新整理頁面也會自動接回還在跑的工作。**一次只能跑一件**（會吃滿 GPU/CPU），跑到一半再按第二個會被擋下來。⚠️ 進度狀態只存在伺服器的記憶體裡，**重啟 uvicorn 會掉**（已完成的工作仍有資料庫紀錄）。
 
 ---
 
@@ -104,6 +108,10 @@ python -m pipeline.run --pet-id PET-2026-001 --style cute --duration 30
 
 # 單鏡頭重生（不重跑 LLM，只換指定鏡頭）
 python -m pipeline.regenerate <job_id> <scene_id> --subtitle "新的字幕"
+
+# 把某幾個照片鏡頭做成 AI 動態（Image-to-Video）；wan 需要 ComfyUI 先開著
+python -m pipeline.run --pet-id PET-2026-001 --animate-scenes 2,4 --video-provider wan --animate-prompt "貓輕輕搖尾巴、抬頭看鏡頭"
+python -m pipeline.regenerate <job_id> <scene_id> --animate --video-provider wan --animate-prompt "狗狗歪頭看鏡頭"
 
 # 跑測試
 pytest
