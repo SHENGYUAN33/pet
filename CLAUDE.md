@@ -76,7 +76,11 @@
 
 `GenerationJob` 現在是**開跑就建檔**：`start_generation_job()` 在慢工作開始前先寫一筆 `status=running`，結束時 `finish_generation_job()`（`done`＋ output_path/script_json）或 `fail_generation_job()`（`failed`＋錯誤原因）收尾，所以跑到一半崩潰／重啟不再是「完全沒紀錄」。狀態值是 `pipeline/models.py` 的 `JobStatus`（`running`／`done`／`failed`）。
 
-這仍**只是** docs/architecture.md §10 的一個子集：§10 還有 SCRIPT_APPROVED／PUBLISHED 等狀態，對應的功能（腳本核准流程、社群發布）都還沒做，刻意不先刻空狀態；`PENDING` 要等真的有佇列（目前 job 一建立就在跑）。**鏡頭級 Job 也還沒有**——失敗仍是整支重跑，不能只續跑失敗的鏡頭。開發時請先確認目前實際完成到哪個階段，不要假設後期功能已存在。
+**鏡頭級 Job（`SceneJob`）**：`scene_jobs` 一列一顆鏡頭，記錄狀態、重試次數、用了哪個素材／I2V provider／prompt（滿足「每支影片都要留生成紀錄」那條規範；seed 還沒記，因為目前沒有 provider 會把它回傳給呼叫端）。這帶來**續跑**：`python -m pipeline.resume <job_id>`（或網頁上失敗版本卡片的「↻ 從失敗的鏡頭續跑」）會沿用該 job `work_dir` 底下已完成的鏡頭 clip，只補跑沒做完的——一顆 Wan2.2 鏡頭要 8 分鐘，這是重點。續跑**沒有任何參數**：腳本、voice_sample、music_track、animate_scenes/video_provider/animate_prompt 全部存在 job 上，從那裡讀，避免續跑產出一支「不一樣的影片」。
+
+`pipeline/rendering.py` 刻意**不 import 資料庫**：鏡頭狀態透過 `scene_tracker` 參數注入（`pipeline/scene_tracking.py` 的 `NoopSceneTracker`／`DatabaseSceneTracker`），跟 `on_progress` 同一個模式——CLI/測試用 no-op，pipeline 用 DB 版。I2V provider 改成**延遲載入**，續跑時若動態化鏡頭都已完成就完全不載模型。
+
+這仍**只是** docs/architecture.md §10 的一個子集：§10 還有 SCRIPT_APPROVED／PUBLISHED 等狀態，對應的功能（腳本核准流程、社群發布）都還沒做，刻意不先刻空狀態；`PENDING` 要等真的有佇列（目前 job 一建立就在跑）。開發時請先確認目前實際完成到哪個階段，不要假設後期功能已存在。
 
 **Schema 演進走 Alembic**（`migrations/`）：改了 `pipeline/models.py` 的既有表結構就要跟著出一份 migration——
 ```bash
@@ -166,6 +170,9 @@ python -m pipeline.run \
   --style cute \
   --duration 30
 # 印出的 "Job id" 可用來做單鏡頭重生；或在 Claude Code 內用 /gen-video 自訂 slash command
+
+# 續跑失敗的生成（沿用已完成的鏡頭，只補跑沒做完的；不吃任何參數，全部從 job 讀）
+python -m pipeline.resume <job_id>
 
 # 單鏡頭重生（不重跑 LLM，只 patch 指定鏡頭後重新渲染整支影片）
 python -m pipeline.regenerate <job_id> <scene_id> \

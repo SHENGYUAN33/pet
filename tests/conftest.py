@@ -12,6 +12,7 @@ def completed_job(
     style: str = "cute",
     duration: int = 30,
     output_path: str = "storage/output/does-not-need-to-exist.mp4",
+    work_dir: str = "storage/output/does-not-need-to-exist",
     disclosure_missing: list[str] | None = None,
     structure_issues: list[str] | None = None,
     script_json: dict | None = None,
@@ -26,13 +27,14 @@ def completed_job(
     job_id = pet_repo.start_generation_job(
         pet_id, style=style, duration=duration, parent_job_id=parent_job_id
     )
-    pet_repo.finish_generation_job(
+    pet_repo.record_job_script(
         job_id,
-        output_path=output_path,
+        script_json=script_json or {},
+        work_dir=work_dir,
         disclosure_missing=disclosure_missing or [],
         structure_issues=structure_issues or [],
-        script_json=script_json or {},
     )
+    pet_repo.finish_generation_job(job_id, output_path=output_path)
     return job_id
 
 

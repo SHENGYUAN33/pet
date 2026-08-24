@@ -375,3 +375,52 @@ def test_video_of_an_unfinished_job_returns_409_not_500(client):
 
     assert response.status_code == 409
     assert "running" in response.json()["detail"]
+
+
+def test_resume_endpoint_rejects_a_finished_job(client):
+    """Resuming a job that already produced its video would re-render it for
+    nothing."""
+    from pipeline.pet_repo import save_pet
+    from pipeline.profile import PetProfile
+    from tests.conftest import completed_job
+
+    save_pet(PetProfile.model_validate(_sample_profile_json()))
+    job_id = completed_job(TEST_PET_ID, script_json={"scenes": []})
+
+    response = client.post(f"/api/jobs/{job_id}/resume")
+
+    assert response.status_code == 409
+    assert "已經完成" in response.json()["detail"]
+
+
+def test_resume_endpoint_rejects_a_job_with_no_script(client):
+    from pipeline.pet_repo import fail_generation_job, save_pet, start_generation_job
+    from pipeline.profile import PetProfile
+
+    save_pet(PetProfile.model_validate(_sample_profile_json()))
+    job_id = start_generation_job(TEST_PET_ID, style="cute", duration=30)
+    fail_generation_job(job_id, "died during script generation")
+
+    response = client.post(f"/api/jobs/{job_id}/resume")
+
+    assert response.status_code == 409
+    assert "腳本產生前" in response.json()["detail"]
+
+
+def test_job_detail_includes_per_scene_rows(client):
+    """The review UI shows which shot failed and what made each one."""
+    from pipeline.pet_repo import save_pet, start_scene_job
+    from pipeline.profile import PetProfile
+    from tests.conftest import completed_job
+
+    save_pet(PetProfile.model_validate(_sample_profile_json()))
+    job_id = completed_job(TEST_PET_ID, script_json={"scenes": []})
+    start_scene_job(
+        job_id, 1, visual_source="IMG-001", video_provider="wan", animate_prompt="貓輕輕搖尾巴"
+    )
+
+    body = client.get(f"/api/jobs/{job_id}").json()
+
+    assert len(body["scene_jobs"]) == 1
+    assert body["scene_jobs"][0]["video_provider"] == "wan"
+    assert body["scene_jobs"][0]["animate_prompt"] == "貓輕輕搖尾巴"

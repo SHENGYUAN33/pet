@@ -10,12 +10,14 @@ from pipeline.pet_repo import (
     finish_generation_job,
     get_generation_job,
     get_pet,
+    record_job_script,
     start_generation_job,
 )
 from pipeline.profile import PetProfile
 from pipeline.progress import ProgressCallback, noop, scaled
 from pipeline.qa import validate_script_structure
 from pipeline.rendering import render_script
+from pipeline.scene_tracking import DatabaseSceneTracker
 
 
 def apply_scene_overrides(
@@ -91,6 +93,11 @@ def regenerate_scene(
         style=job["style"],
         duration=job["duration"],
         parent_job_id=job_id,
+        voice_sample=voice_sample,
+        music_track=music_track,
+        animate_scenes={scene_id} if animate else None,
+        video_provider=video_provider,
+        animate_prompt=animate_prompt,
     )
     try:
         final_path = _render_revision(
@@ -137,6 +144,14 @@ def _render_revision(
         print(f"[WARNING] structural issues: {structure_issues}")
 
     work_dir = config.OUTPUT_DIR / profile.pet_id / f"gen_{uuid.uuid4().hex[:8]}"
+    record_job_script(
+        new_job_id,
+        script_json=script,
+        work_dir=str(work_dir),
+        disclosure_missing=missing,
+        structure_issues=structure_issues,
+    )
+
     final_path = render_script(
         profile,
         script,
@@ -147,15 +162,10 @@ def _render_revision(
         video_provider=video_provider,
         animate_prompt=animate_prompt,
         on_progress=scaled(on_progress, 0.05, 0.98),
+        scene_tracker=DatabaseSceneTracker(new_job_id),
     )
 
     on_progress("寫入生成紀錄", 0.99)
-    finish_generation_job(
-        new_job_id,
-        output_path=str(final_path),
-        disclosure_missing=missing,
-        structure_issues=structure_issues,
-        script_json=script,
-    )
+    finish_generation_job(new_job_id, output_path=str(final_path))
 
     return str(final_path)

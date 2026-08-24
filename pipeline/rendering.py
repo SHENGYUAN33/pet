@@ -15,6 +15,7 @@ from pipeline.i2v import animate_photo, get_video_provider
 from pipeline.narration import silence_scenes, synthesize_scenes
 from pipeline.profile import PetProfile
 from pipeline.progress import ProgressCallback, noop
+from pipeline.scene_tracking import NoopSceneTracker, SceneTracker
 from providers.tts.xtts_provider import XTTSProvider
 
 
@@ -48,6 +49,7 @@ def render_script(
     video_provider: str = "svd",
     animate_prompt: str | None = None,
     on_progress: ProgressCallback = noop,
+    scene_tracker: SceneTracker | None = None,
 ) -> Path:
     """Render a single already-selected script into a final MP4 inside
     work_dir: narration/silence per scene, per-scene video clips (real
@@ -69,9 +71,17 @@ def render_script(
 
     on_progress reports which stage is running (see pipeline/progress.py);
     the CLI leaves it at the no-op default, the web UI uses it to drive a
-    progress bar instead of a blank spinner."""
+    progress bar instead of a blank spinner.
+
+    scene_tracker (see pipeline/scene_tracking.py) records each scene's
+    outcome and can hand back a clip an earlier attempt already finished, so
+    a resumed run skips it. Default is the no-op tracker: render every
+    scene, record nothing — which is what a caller without a job row wants.
+    Passed in rather than looked up here so this module stays free of any
+    database dependency."""
     work_dir.mkdir(parents=True, exist_ok=True)
     animate_scenes = animate_scenes or set()
+    tracker = scene_tracker or NoopSceneTracker()
 
     if voice_sample:
         on_progress("產生旁白配音（TTS）", 0.0)
@@ -82,9 +92,17 @@ def render_script(
     else:
         audio_paths = silence_scenes(script, work_dir / "audio")
 
-    if animate_scenes:
-        on_progress(f"載入 {video_provider} 影片生成模型", 0.15)
-    i2v_provider = get_video_provider(video_provider) if animate_scenes else None
+    # Loaded on first use rather than up front: the model costs minutes to
+    # load, and a resumed run whose animated scenes are already done never
+    # needs it at all.
+    i2v_provider = None
+
+    def load_i2v_provider():
+        nonlocal i2v_provider
+        if i2v_provider is None:
+            on_progress(f"載入 {video_provider} 影片生成模型", 0.15)
+            i2v_provider = get_video_provider(video_provider)
+        return i2v_provider
 
     video_clip_paths = []
     ordered_audio_paths = []
@@ -92,42 +110,62 @@ def render_script(
     # Scene rendering owns 0.2-0.9 of this stage; the surrounding TTS and
     # concat/mux steps are comparatively quick.
     for index, scene in enumerate(script["scenes"]):
-        visual_path = _resolve_visual_path(profile, scene["visual_source"])
+        scene_id = scene["scene_id"]
         duration = scene["end"] - scene["start"]
-
         scene_fraction = 0.2 + 0.7 * (index / scene_count)
-        animated = (
-            scene["scene_id"] in animate_scenes and visual_path.suffix.lower() in PHOTO_EXTENSIONS
-        )
+        ordered_audio_paths.append(audio_paths[scene_id])
+
+        reused = tracker.reusable_clip(scene_id)
+        if reused is not None:
+            on_progress(f"鏡頭 {index + 1}/{scene_count}：沿用上次已完成的結果", scene_fraction)
+            video_clip_paths.append(reused)
+            continue
+
+        visual_path = _resolve_visual_path(profile, scene["visual_source"])
+        animated = scene_id in animate_scenes and visual_path.suffix.lower() in PHOTO_EXTENSIONS
         on_progress(
             f"鏡頭 {index + 1}/{scene_count}"
             + (f"：{video_provider} 動態化中（比較久）" if animated else "：剪輯與字幕"),
             scene_fraction,
         )
 
-        if animated:
-            i2v_path = work_dir / f"scene_{scene['scene_id']}_i2v.mp4"
-            animate_photo(
-                str(visual_path),
-                i2v_provider,
-                duration=duration,
-                output_path=str(i2v_path),
-                prompt=animate_prompt,
-            )
-            # build_scene_clip below treats any non-photo-suffix input as
-            # real footage (loop-if-short + crop, see pipeline/editing.py),
-            # which is exactly what a raw I2V clip needs too.
-            visual_path = i2v_path
-
-        clip_path = work_dir / f"scene_{scene['scene_id']}.mp4"
-        build_scene_clip(
-            visual_path=str(visual_path),
-            duration=duration,
-            subtitle_text=scene["subtitle"],
-            output_path=str(clip_path),
+        tracker.start_scene(
+            scene_id,
+            visual_source=scene["visual_source"],
+            video_provider=video_provider if animated else None,
+            animate_prompt=animate_prompt if animated else None,
         )
+        clip_path = work_dir / f"scene_{scene_id}.mp4"
+        try:
+            if animated:
+                i2v_path = work_dir / f"scene_{scene_id}_i2v.mp4"
+                animate_photo(
+                    str(visual_path),
+                    load_i2v_provider(),
+                    duration=duration,
+                    output_path=str(i2v_path),
+                    prompt=animate_prompt,
+                )
+                # build_scene_clip below treats any non-photo-suffix input as
+                # real footage (loop-if-short + crop, see pipeline/editing.py),
+                # which is exactly what a raw I2V clip needs too.
+                visual_path = i2v_path
+
+            build_scene_clip(
+                visual_path=str(visual_path),
+                duration=duration,
+                subtitle_text=scene["subtitle"],
+                output_path=str(clip_path),
+            )
+        except Exception as e:
+            # Boundary: FFmpeg and the I2V providers are external. Record
+            # which scene died before re-raising, so a resume knows where to
+            # pick up and the reviewer sees which shot was the problem.
+            tracker.fail_scene(scene_id, f"{type(e).__name__}: {e}")
+            raise
+
+        tracker.finish_scene(scene_id, str(clip_path))
         video_clip_paths.append(str(clip_path))
-        ordered_audio_paths.append(audio_paths[scene["scene_id"]])
 
     # Sum actual per-scene clip durations rather than trusting scenes[-1]["end"]:
     # if the LLM's timeline has gaps/overlaps (see pipeline/qa.py), the

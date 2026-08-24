@@ -57,7 +57,10 @@ def _delete_test_pet() -> None:
 
 @pytest.fixture(autouse=True)
 def _clean_test_pet():
-    db.init_db()
+    # Deliberately does NOT call db.init_db(): create_all() would quietly
+    # add any table missing from the database, which is exactly how a
+    # missing migration hides (it masked the scene_jobs one once already).
+    # The schema is the migrations' job; these tests skip if it isn't there.
     _delete_test_pet()
     yield
     _delete_test_pet()
@@ -179,13 +182,14 @@ def test_finishing_a_job_records_what_the_run_produced():
     pet_repo.save_pet(_sample_profile())
     job_id = pet_repo.start_generation_job(TEST_PET_ID, style="cute", duration=30)
 
-    pet_repo.finish_generation_job(
+    pet_repo.record_job_script(
         job_id,
-        output_path="storage/output/PET-TEST-REPO-0001/out.mp4",
+        script_json=_sample_script(),
+        work_dir="storage/output/PET-TEST-REPO-0001/gen_abc",
         disclosure_missing=["需長期服藥"],
         structure_issues=[],
-        script_json=_sample_script(),
     )
+    pet_repo.finish_generation_job(job_id, output_path="storage/output/PET-TEST-REPO-0001/out.mp4")
 
     job = pet_repo.get_generation_job(job_id)
     assert job is not None
@@ -218,10 +222,4 @@ def test_finishing_or_failing_an_unknown_job_raises():
     with pytest.raises(ValueError, match="999999999"):
         pet_repo.fail_generation_job(999_999_999, "boom")
     with pytest.raises(ValueError, match="999999999"):
-        pet_repo.finish_generation_job(
-            999_999_999,
-            output_path="x.mp4",
-            disclosure_missing=[],
-            structure_issues=[],
-            script_json={},
-        )
+        pet_repo.finish_generation_job(999_999_999, output_path="x.mp4")

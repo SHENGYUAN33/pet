@@ -1183,6 +1183,18 @@ function renderJobs() {
     regenBtn.disabled = !done;
     regenBtn.onclick = (e) => { e.stopPropagation(); openRegenFor(job.id); };
     actions.append(playBtn, regenBtn);
+
+    // A failed run that got as far as recording its script can be continued:
+    // the scenes it already rendered are reused instead of costing another
+    // eight minutes each.
+    if (job.status === "failed" && job.scene_count > 0) {
+      const resumeBtn = document.createElement("button");
+      resumeBtn.type = "button";
+      resumeBtn.className = "tiny";
+      resumeBtn.textContent = "↻ 從失敗的鏡頭續跑";
+      resumeBtn.onclick = (e) => { e.stopPropagation(); resumeJob(job.id); };
+      actions.appendChild(resumeBtn);
+    }
     div.appendChild(actions);
 
     if (done) div.onclick = () => playJob(job.id);
@@ -1354,6 +1366,15 @@ $("generate-form").addEventListener("submit", async (e) => {
     toast("無法開始生成：" + err.message, "err");
   }
 });
+
+async function resumeJob(jobId) {
+  try {
+    const task = await api("/api/jobs/" + jobId + "/resume", { method: "POST" });
+    trackTask(task);
+  } catch (err) {
+    toast("無法續跑：" + err.message, "err");
+  }
+}
 
 /* ---------- regenerate ---------- */
 $("regenerate-form").addEventListener("submit", async (e) => {

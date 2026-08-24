@@ -26,11 +26,18 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
 from pipeline import config
-from pipeline.pet_repo import get_generation_job, get_pet, list_generation_jobs, list_pets, save_pet
+from pipeline.pet_repo import (
+    get_generation_job,
+    get_pet,
+    list_generation_jobs,
+    list_pets,
+    list_scene_jobs,
+    save_pet,
+)
 from pipeline.profile import PetProfile
 from pipeline.progress import ProgressCallback
 from pipeline.regen import regenerate_scene
-from pipeline.run import generate_video
+from pipeline.run import generate_video, resume_generation_job
 from webapp import tasks
 
 app = FastAPI(title="Pet Adoption Video — Review Tool")
@@ -305,6 +312,35 @@ def api_regenerate_scene(job_id: int, req: RegenerateSceneRequest):
     )
 
 
+@app.post("/api/jobs/{job_id}/resume", status_code=202)
+def api_resume_job(job_id: int):
+    """Continue an unfinished run, reusing the scenes it already rendered.
+
+    Worth its own endpoint rather than "just generate again": a Wan2.2 scene
+    costs about eight minutes, so re-rendering the scenes that already
+    succeeded is the expensive mistake this avoids.
+
+    Takes no body — everything that shapes the output was stored on the job
+    when it started, and letting a caller override it here would finish a
+    different video from the one that was interrupted."""
+    job = get_generation_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"No generation job found with id {job_id}")
+    if job["status"] == "done":
+        raise HTTPException(status_code=409, detail=f"Job {job_id} 已經完成了，沒有東西可以續跑。")
+    if not job["script_json"] or not job["work_dir"]:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job {job_id} 在腳本產生前就失敗了，請直接重新產生一支新影片。",
+        )
+
+    def work(on_progress: ProgressCallback) -> dict:
+        output_path = resume_generation_job(job_id, on_progress=on_progress)
+        return {"output_path": output_path, "job_id": job_id}
+
+    return _start(kind="resume", pet_id=job["pet_id"], label=f"續跑 Job {job_id}", work=work)
+
+
 def _start(**kwargs) -> dict:
     try:
         return tasks.start_task(**kwargs)
@@ -338,6 +374,9 @@ def api_get_job(job_id: int):
     job = get_generation_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"No generation job found with id {job_id}")
+    # Per-scene status/provenance, so the reviewer can see which shot failed
+    # and which provider made each one.
+    job["scene_jobs"] = list_scene_jobs(job_id)
     return job
 
 

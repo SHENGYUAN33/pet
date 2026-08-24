@@ -3,19 +3,24 @@ from __future__ import annotations
 import argparse
 import json
 import uuid
+from pathlib import Path
 
 from pipeline import config
 from pipeline.fact_check import find_missing_disclosures
+from pipeline.models import JobStatus
 from pipeline.pet_repo import (
     fail_generation_job,
     finish_generation_job,
+    get_generation_job,
     get_pet,
+    record_job_script,
     start_generation_job,
 )
 from pipeline.profile import PetProfile
 from pipeline.progress import ProgressCallback, noop, scaled
 from pipeline.qa import validate_script_structure
 from pipeline.rendering import render_script
+from pipeline.scene_tracking import DatabaseSceneTracker
 from pipeline.script_gen import SCRIPT_STYLES, generate_all_styles
 from providers.llm.ollama_provider import OllamaLLMProvider
 
@@ -52,7 +57,16 @@ def generate_video(
 
     # Opened before the slow work so a crash or restart mid-run still leaves
     # a record; _run_generation() below closes it either way.
-    job_id = start_generation_job(profile.pet_id, style=style, duration=duration)
+    job_id = start_generation_job(
+        profile.pet_id,
+        style=style,
+        duration=duration,
+        voice_sample=voice_sample,
+        music_track=music_track,
+        animate_scenes=animate_scenes,
+        video_provider=video_provider,
+        animate_prompt=animate_prompt,
+    )
     try:
         final_path = _run_generation(
             profile,
@@ -130,6 +144,17 @@ def _run_generation(
     script = scripts[style]
 
     work_dir = config.OUTPUT_DIR / profile.pet_id / f"gen_{uuid.uuid4().hex[:8]}"
+    # Attached before rendering, not after: resume_generation_job() needs the
+    # script to know what to render and work_dir to find the clips that a
+    # previous attempt already produced.
+    record_job_script(
+        job_id,
+        script_json=script,
+        work_dir=str(work_dir),
+        disclosure_missing=selected_missing,
+        structure_issues=selected_structure_issues,
+    )
+
     final_path = render_script(
         profile,
         script,
@@ -140,17 +165,72 @@ def _run_generation(
         video_provider=video_provider,
         animate_prompt=animate_prompt,
         on_progress=scaled(on_progress, 0.35, 0.98),
+        scene_tracker=DatabaseSceneTracker(job_id),
     )
 
     on_progress("寫入生成紀錄", 0.99)
-    finish_generation_job(
-        job_id,
-        output_path=str(final_path),
-        disclosure_missing=selected_missing,
-        structure_issues=selected_structure_issues,
-        script_json=script,
-    )
+    finish_generation_job(job_id, output_path=str(final_path))
 
+    return str(final_path)
+
+
+def resume_generation_job(
+    job_id: int,
+    *,
+    on_progress: ProgressCallback = noop,
+) -> str:
+    """Continue a run that failed partway through, reusing the scene clips it
+    already finished.
+
+    The point of per-scene jobs: a Wan2.2 scene costs about eight minutes, so
+    a run that died on scene 5 must not re-render scenes 1-4. Their clips are
+    still in the job's work_dir and their rows say DONE, so rendering skips
+    straight past them.
+
+    Continues the same job row rather than opening a new one — the run is the
+    same attempt at the same script, and a second row would double-count it in
+    the pet's history. Everything that shapes the output (script, narration
+    voice, music, which scenes are animated and with what) comes from the job
+    row rather than from arguments: resuming has to finish the video that was
+    being made, not make a subtly different one. Returns the output path.
+    """
+    on_progress("讀取未完成的工作", 0.01)
+    job = get_generation_job(job_id)
+    if job is None:
+        raise ValueError(f"No generation job found with id {job_id}")
+    if job["status"] == JobStatus.DONE.value:
+        raise ValueError(f"Job {job_id} already finished — nothing to resume")
+    if not job["script_json"] or not job["work_dir"]:
+        # It died before the script was attached, so there is nothing to
+        # continue from; the only honest option is a fresh run.
+        raise ValueError(
+            f"Job {job_id} failed before its script was recorded — "
+            "start a new generation instead of resuming"
+        )
+
+    profile = get_pet(job["pet_id"])
+    if profile is None:
+        raise ValueError(f"No pet found with id {job['pet_id']!r}")
+
+    try:
+        final_path = render_script(
+            profile,
+            job["script_json"],
+            Path(job["work_dir"]),
+            voice_sample=job["voice_sample"],
+            music_track=job["music_track"],
+            animate_scenes=set(job["animate_scenes"]) if job["animate_scenes"] else None,
+            video_provider=job["video_provider"] or "svd",
+            animate_prompt=job["animate_prompt"],
+            on_progress=scaled(on_progress, 0.05, 0.98),
+            scene_tracker=DatabaseSceneTracker(job_id, resume=True),
+        )
+    except Exception as e:
+        fail_generation_job(job_id, f"{type(e).__name__}: {e}")
+        raise
+
+    on_progress("寫入生成紀錄", 0.99)
+    finish_generation_job(job_id, output_path=str(final_path))
     return str(final_path)
 
 

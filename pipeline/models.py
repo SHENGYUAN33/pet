@@ -3,7 +3,7 @@ from __future__ import annotations
 import enum
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -84,6 +84,19 @@ class GenerationJob(Base):
     status: Mapped[str] = mapped_column(String, default=JobStatus.RUNNING.value)
     output_path: Mapped[str | None] = mapped_column(String, nullable=True)
     error: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Where this run's scene clips live. Kept so a resumed run writes into
+    # the same directory and can reuse the clips already rendered there.
+    work_dir: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Everything a resumed run needs to reproduce the video that was being
+    # made. Without these it would silently make a *different* one: no
+    # narration or music (the two paths below), and Ken Burns instead of
+    # Image-to-Video for the scenes it had not reached yet. Paths to local
+    # files, not secrets.
+    voice_sample: Mapped[str | None] = mapped_column(String, nullable=True)
+    music_track: Mapped[str | None] = mapped_column(String, nullable=True)
+    animate_scenes: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    video_provider: Mapped[str | None] = mapped_column(String, nullable=True)
+    animate_prompt: Mapped[str | None] = mapped_column(String, nullable=True)
     disclosure_missing: Mapped[dict] = mapped_column(JSONB)
     structure_issues: Mapped[dict] = mapped_column(JSONB)
     script_json: Mapped[dict] = mapped_column(JSONB)
@@ -98,3 +111,50 @@ class GenerationJob(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     pet: Mapped[Pet] = relationship(back_populates="generation_jobs")
+    scene_jobs: Mapped[list[SceneJob]] = relationship(
+        back_populates="job", cascade="all, delete-orphan"
+    )
+
+
+class SceneJob(Base):
+    """One row per scene of one generation run (docs/architecture.md §10's
+    per-scene jobs).
+
+    Two things depend on this. Resuming: a Wan2.2 scene costs ~8 minutes, so
+    a run that dies on scene 5 must not throw away scenes 1-4 — their clips
+    are already on disk under the job's work_dir, and a DONE row here is
+    what says a clip is finished rather than half-written. Provenance: the
+    project requires every video to record which provider and prompt
+    produced each shot (CLAUDE.md 開發規範), which until now lived only in
+    function arguments and was lost the moment the run ended.
+
+    One row per (job_id, scene_id); a retry updates the row and bumps
+    attempt rather than inserting a second one. video_provider and
+    animate_prompt are NULL for the scenes that were not animated — most of
+    them, since real footage and Ken Burns are the default (strategy A).
+
+    Seed is not recorded yet: no VideoGenerationProvider reports the seed it
+    used back to the caller, so there is nothing truthful to store. It
+    belongs here once the provider interface returns it.
+    """
+
+    __tablename__ = "scene_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    job_id: Mapped[int] = mapped_column(
+        ForeignKey("generation_jobs.id", ondelete="CASCADE"), index=True
+    )
+    scene_id: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String, default=JobStatus.RUNNING.value)
+    attempt: Mapped[int] = mapped_column(Integer, default=1)
+    visual_source: Mapped[str | None] = mapped_column(String, nullable=True)
+    video_provider: Mapped[str | None] = mapped_column(String, nullable=True)
+    animate_prompt: Mapped[str | None] = mapped_column(String, nullable=True)
+    clip_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    error: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (UniqueConstraint("job_id", "scene_id", name="uq_scene_jobs_job_scene"),)
+
+    job: Mapped[GenerationJob] = relationship(back_populates="scene_jobs")
