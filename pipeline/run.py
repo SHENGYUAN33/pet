@@ -234,7 +234,7 @@ def resume_generation_job(
     return str(final_path)
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="MVP pipeline: generate a pet adoption video for a pet in the catalog"
     )
@@ -266,12 +266,16 @@ def main():
         help="Which open-source I2V model to use with --animate-scenes (default: svd)",
     )
     parser.add_argument(
-        "--prompt",
+        "--animate-prompt",
         default=None,
         help="Motion guidance for animated scenes, e.g. '貓輕輕搖尾巴、抬頭看鏡頭' "
         "(only affects prompt-conditioned providers: cogvideox, wan; ignored by svd)",
     )
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> None:
+    args = build_parser().parse_args()
 
     animate_scenes = (
         {int(s) for s in args.animate_scenes.split(",")} if args.animate_scenes else None
@@ -285,7 +289,7 @@ def main():
         duration=args.duration,
         animate_scenes=animate_scenes,
         video_provider=args.video_provider,
-        animate_prompt=args.prompt,
+        animate_prompt=args.animate_prompt,
     )
     print(f"Job id: {job_id}")
     print(f"Done: {output_path}")
