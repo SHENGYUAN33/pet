@@ -2,7 +2,8 @@
 
 自動化生成貓狗寵物 30 秒（含 15 秒版）領養宣傳短影音，含旁白（寵物第一人稱自我介紹）、字幕、配樂與可愛特效，協助收容所/動保團體提升領養曝光。
 
-- **要啟動系統/測試，照 [STARTUP.md](STARTUP.md) 的步驟做**
+- **完整使用手冊（首次安裝、每日啟動、網頁與 CLI 操作、疑難排解）：[docs/manual.md](docs/manual.md)**
+- 只要查每天的啟動順序：[STARTUP.md](STARTUP.md)（手冊的精簡版）
 - 系統架構與 AI provider 策略：見 [CLAUDE.md](CLAUDE.md)
 - 詳細分層設計、旁白 pipeline、開發階段規劃：見 [docs/architecture.md](docs/architecture.md)
 
