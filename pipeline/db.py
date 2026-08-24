@@ -8,7 +8,19 @@ from sqlalchemy.orm import Session, sessionmaker
 from pipeline import config
 from pipeline.models import Base
 
-engine = create_engine(config.DATABASE_URL)
+
+def engine_connect_args() -> dict[str, int]:
+    """Driver-level connection options.
+
+    Only a connect timeout, so an unreachable database fails instead of
+    blocking — see config.DB_CONNECT_TIMEOUT for why that matters. Its own
+    function so a test can check the timeout is actually being applied
+    without opening a connection.
+    """
+    return {"connect_timeout": config.DB_CONNECT_TIMEOUT}
+
+
+engine = create_engine(config.DATABASE_URL, connect_args=engine_connect_args())
 SessionLocal = sessionmaker(bind=engine)
 
 

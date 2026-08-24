@@ -138,16 +138,13 @@ ollama list
 pytest
 ```
 
-應該看到全部通過（目前 95 項）。不需要 GPU、不需要 Ollama、不需要 FFmpeg，
-但**需要 PostgreSQL 已經在跑**（也就是 2.5 要先做完）。
+應該看到 **98 項全部通過**（約 8 秒）。不需要 GPU、不需要 Ollama、不需要 FFmpeg。
 
-> **已知問題**：資料庫沒開時，測試**不會失敗，但會慢到像當掉**。
-> 需要資料庫的那 5 個測試檔（`test_pet_repo`／`test_job_lifecycle`／`test_scene_jobs`／
-> `test_migrations`／`test_webapp`）各有一個「連不上就跳過」的判斷，
-> 但那個判斷沒有設連線逾時，每一個都要卡好幾分鐘才放棄。
-> 實測資料庫關閉時的結果是 **42 passed、53 skipped，花了 21 分 46 秒**（正常應是 8 秒內）。
-> 而且收集階段就卡住，過程中畫面完全空白。
-> 如果 `pytest` 執行後一直沒有輸出，先確認 `docker ps` 看得到 `dogcat-postgres-1`。
+資料庫沒開也能跑，只是需要資料庫的那 53 項會被跳過（顯示 `45 passed, 53 skipped`），
+所以**要完整驗收就先做完 2.5**。
+
+> 資料庫關閉時的執行時間約 26 秒 — 比正常慢，是因為要等連線逾時。
+> `DB_CONNECT_TIMEOUT`（預設 2 秒）控制這個等待，一般不需要調整。
 
 ### 2.8 選用：安裝 Image-to-Video（需要 NVIDIA GPU）
 
@@ -547,7 +544,7 @@ dogcat/
 | `port 5432 already in use` | 跑錯專案的 compose | 本專案用 **5433**，確認在 dogcat 目錄下執行 |
 | 腳本生成卡住或連線錯誤指向 11434 | Ollama 沒跑 | `ollama list` 測試，從系統匣啟動 |
 | `FileNotFoundError: ffmpeg` | FFmpeg 不在 PATH | 開新終端機；仍失敗則重新登入 Windows |
-| `pytest` 長時間沒有輸出（可達 20 分鐘） | PostgreSQL 沒開，跳過判斷沒有連線逾時 | `docker compose up -d` 後重跑；會變回 8 秒內跑完 |
+| `pytest` 顯示大量 skipped | PostgreSQL 沒開，需要資料庫的測試被跳過 | `docker compose up -d` 後重跑，98 項應全過 |
 | 影片沒有聲音 | 沒給語音樣本 | 傳 `--voice-sample`；重生時也要再傳一次 |
 | 字幕是方框或亂碼 | 字型路徑不對 | 檢查 `.env` 的 `DRAWTEXT_FONT_FILE` 指向存在的中文字型 |
 | 網頁一直顯示「生成中」但沒進度 | 上一個 process 死掉留下的紀錄 | 重啟 uvicorn，啟動時會自動收尾成失敗並可續跑 |
@@ -567,6 +564,7 @@ dogcat/
 | `XTTS_MODEL_NAME` | `tts_models/multilingual/multi-dataset/xtts_v2` | TTS 模型 |
 | `TTS_LANGUAGE` | `zh-cn` | XTTS 的中文語言代碼 |
 | `DATABASE_URL` | `postgresql+psycopg://petvideo:changeme@localhost:5433/petvideo` | 資料庫連線 |
+| `DB_CONNECT_TIMEOUT` | `2` | 連線逾時秒數；設 0 會被自動提升為 1，避免無限等待 |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `petvideo` / `changeme` / `petvideo` | Docker 容器用 |
 | `DRAWTEXT_FONT_FILE` | `C:\Windows\Fonts\msjh.ttc` | 字幕字型（微軟正黑體） |
 | `MIN_SCENES` / `MAX_SCENES` | `5` / `7` | 每支影片的鏡頭數範圍 |

@@ -39,6 +39,20 @@ MAX_SCENE_DURATION = int(os.getenv("MAX_SCENE_DURATION", "6"))
 DATABASE_URL = os.getenv(
     "DATABASE_URL", "postgresql+psycopg://petvideo:changeme@localhost:5433/petvideo"
 )
+# Seconds to wait for a connection before giving up. Without an explicit
+# value libpq waits indefinitely, which turns "PostgreSQL isn't running"
+# into a hang rather than an error: `pytest` with Docker stopped took 21
+# minutes to report its skips (measured), because each database-backed test
+# module probes the connection during collection and printed nothing while
+# it waited. Nothing here should ever need seconds to connect — the database
+# is local — so a short timeout only ever converts a stall into a prompt
+# failure. libpq applies it per host address, and "localhost" resolves to
+# both 127.0.0.1 and ::1, so the real worst case is twice this.
+# Floored at 1 because libpq reads 0 as "wait forever" — the exact stall this
+# setting exists to prevent, which an operator trying to disable the timeout
+# would otherwise reintroduce. (libpq also treats 1 as 2, so 1 is the real
+# minimum either way.)
+DB_CONNECT_TIMEOUT = max(1, int(os.getenv("DB_CONNECT_TIMEOUT", "2")))
 
 # Image-to-Video (docs/architecture.md §5 strategy B) — open-source, self-hosted.
 # CogVideoX's officially released image-to-video checkpoint is the 5B variant;
