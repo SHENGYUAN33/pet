@@ -3,8 +3,9 @@ from __future__ import annotations
 import pytest
 
 from pipeline import db, pet_repo
-from pipeline.models import Pet
+from pipeline.models import JobStatus, Pet
 from pipeline.profile import PetProfile
+from tests.conftest import completed_job
 
 TEST_PET_ID = "PET-TEST-REPO-0001"
 
@@ -107,12 +108,9 @@ def _sample_script() -> dict:
 def test_record_and_list_generation_jobs():
     pet_repo.save_pet(_sample_profile())
 
-    job_id = pet_repo.record_generation_job(
+    job_id = completed_job(
         TEST_PET_ID,
-        style="cute",
-        duration=30,
         output_path="storage/output/PET-TEST-REPO-0001/out.mp4",
-        disclosure_missing=[],
         structure_issues=["scene 2 has an empty subtitle"],
         script_json=_sample_script(),
     )
@@ -130,13 +128,9 @@ def test_record_and_list_generation_jobs():
 def test_get_generation_job_returns_full_script_and_regeneration_links_parent():
     pet_repo.save_pet(_sample_profile())
 
-    job_id = pet_repo.record_generation_job(
+    job_id = completed_job(
         TEST_PET_ID,
-        style="cute",
-        duration=30,
         output_path="storage/output/PET-TEST-REPO-0001/out.mp4",
-        disclosure_missing=[],
-        structure_issues=[],
         script_json=_sample_script(),
     )
 
@@ -145,13 +139,9 @@ def test_get_generation_job_returns_full_script_and_regeneration_links_parent():
     assert fetched["script_json"]["scenes"][0]["visual_source"] == "IMG-001"
     assert fetched["parent_job_id"] is None
 
-    revision_id = pet_repo.record_generation_job(
+    revision_id = completed_job(
         TEST_PET_ID,
-        style="cute",
-        duration=30,
         output_path="storage/output/PET-TEST-REPO-0001/out2.mp4",
-        disclosure_missing=[],
-        structure_issues=[],
         script_json=_sample_script(),
         parent_job_id=job_id,
     )
@@ -163,3 +153,75 @@ def test_get_generation_job_returns_full_script_and_regeneration_links_parent():
 
 def test_get_generation_job_returns_none_for_unknown_id():
     assert pet_repo.get_generation_job(999_999_999) is None
+
+
+def test_started_job_is_visible_as_running_before_it_finishes():
+    """The point of opening the row up front: a run that is still going, or
+    that died without closing its row, is visible instead of invisible."""
+    pet_repo.save_pet(_sample_profile())
+
+    job_id = pet_repo.start_generation_job(TEST_PET_ID, style="cute", duration=30)
+
+    job = pet_repo.get_generation_job(job_id)
+    assert job is not None
+    assert job["status"] == JobStatus.RUNNING.value
+    assert job["output_path"] is None
+    assert job["error"] is None
+    # Empty rather than NULL, so readers never special-case "not yet".
+    assert job["script_json"] == {}
+
+    listed = next(j for j in pet_repo.list_generation_jobs(TEST_PET_ID) if j["id"] == job_id)
+    assert listed["status"] == JobStatus.RUNNING.value
+    assert listed["finished_at"] is None
+
+
+def test_finishing_a_job_records_what_the_run_produced():
+    pet_repo.save_pet(_sample_profile())
+    job_id = pet_repo.start_generation_job(TEST_PET_ID, style="cute", duration=30)
+
+    pet_repo.finish_generation_job(
+        job_id,
+        output_path="storage/output/PET-TEST-REPO-0001/out.mp4",
+        disclosure_missing=["需長期服藥"],
+        structure_issues=[],
+        script_json=_sample_script(),
+    )
+
+    job = pet_repo.get_generation_job(job_id)
+    assert job is not None
+    assert job["status"] == JobStatus.DONE.value
+    assert job["output_path"] == "storage/output/PET-TEST-REPO-0001/out.mp4"
+    assert job["script_json"]["scenes"][0]["visual_source"] == "IMG-001"
+    assert job["error"] is None
+
+    listed = next(j for j in pet_repo.list_generation_jobs(TEST_PET_ID) if j["id"] == job_id)
+    assert listed["disclosure_missing"]["missing_restrictions"] == ["需長期服藥"]
+    assert listed["finished_at"] is not None
+
+
+def test_failing_a_job_keeps_the_reason():
+    """A failed run has to say why — the reviewer's only other signal is a
+    video that never appeared."""
+    pet_repo.save_pet(_sample_profile())
+    job_id = pet_repo.start_generation_job(TEST_PET_ID, style="cute", duration=30)
+
+    pet_repo.fail_generation_job(job_id, "RuntimeError: ComfyUI server not reachable")
+
+    job = pet_repo.get_generation_job(job_id)
+    assert job is not None
+    assert job["status"] == JobStatus.FAILED.value
+    assert "ComfyUI server not reachable" in job["error"]
+    assert job["output_path"] is None
+
+
+def test_finishing_or_failing_an_unknown_job_raises():
+    with pytest.raises(ValueError, match="999999999"):
+        pet_repo.fail_generation_job(999_999_999, "boom")
+    with pytest.raises(ValueError, match="999999999"):
+        pet_repo.finish_generation_job(
+            999_999_999,
+            output_path="x.mp4",
+            disclosure_missing=[],
+            structure_issues=[],
+            script_json={},
+        )

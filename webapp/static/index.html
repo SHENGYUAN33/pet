@@ -1127,6 +1127,10 @@ function renderJobs() {
   for (const job of currentJobs) {
     const missing = ((job.disclosure_missing || {}).missing_restrictions) || [];
     const issues = ((job.structure_issues || {}).issues) || [];
+    // Jobs are recorded from the moment a run starts, so a card can describe
+    // a run that is still going or that died — only a finished one has a
+    // video to play or a script to regenerate a scene from.
+    const done = job.status === "done";
 
     const div = document.createElement("div");
     div.className = "job" + (job.id === playingJobId ? " playing" : "");
@@ -1135,14 +1139,22 @@ function renderJobs() {
     top.className = "job-top";
     top.innerHTML = [
       '<span class="job-id">Job ' + job.id + "</span>",
+      job.status === "running" ? '<span class="badge warn">⏳ 生成中</span>' : "",
+      job.status === "failed" ? '<span class="badge danger">✕ 失敗</span>' : "",
       '<span class="badge accent">' + (STYLE_LABEL[job.style] || job.style) + "</span>",
-      '<span class="badge">' + job.duration + "s · " + job.scene_count + " 鏡頭</span>",
+      done ? '<span class="badge">' + job.duration + "s · " + job.scene_count + " 鏡頭</span>" : "",
       job.parent_job_id ? '<span class="badge">↺ 重生自 ' + job.parent_job_id + "</span>" : "",
-      !missing.length && !issues.length ? '<span class="badge ok">✓ 檢查通過</span>' : "",
+      done && !missing.length && !issues.length ? '<span class="badge ok">✓ 檢查通過</span>' : "",
       '<span class="job-time">' + new Date(job.created_at).toLocaleString("zh-TW") + "</span>",
     ].join("");
     div.appendChild(top);
 
+    if (job.error) {
+      const d = document.createElement("div");
+      d.className = "issue bad";
+      d.textContent = "錯誤：" + job.error;
+      div.appendChild(d);
+    }
     if (missing.length) {
       const d = document.createElement("div");
       d.className = "issue bad";
@@ -1162,16 +1174,18 @@ function renderJobs() {
     playBtn.type = "button";
     playBtn.className = "tiny";
     playBtn.textContent = job.id === playingJobId ? "▶ 播放中" : "▶ 播放";
+    playBtn.disabled = !done;
     playBtn.onclick = (e) => { e.stopPropagation(); playJob(job.id, true); };
     const regenBtn = document.createElement("button");
     regenBtn.type = "button";
     regenBtn.className = "tiny";
     regenBtn.textContent = "🎬 改這個版本的鏡頭";
+    regenBtn.disabled = !done;
     regenBtn.onclick = (e) => { e.stopPropagation(); openRegenFor(job.id); };
     actions.append(playBtn, regenBtn);
     div.appendChild(actions);
 
-    div.onclick = () => playJob(job.id);
+    if (done) div.onclick = () => playJob(job.id);
     host.appendChild(div);
   }
 }
@@ -1198,11 +1212,14 @@ function playJob(jobId, autoplay) {
 function renderRegenPanel() {
   const form = $("regenerate-form");
   const empty = $("regen-empty");
-  if (!currentPetId || !currentJobs.length) {
+  // Regeneration reads the chosen version's script, which only a finished
+  // run has — a running or failed job can't be a starting point.
+  const doneJobs = currentJobs.filter((j) => j.status === "done");
+  if (!currentPetId || !doneJobs.length) {
     form.hidden = true;
     empty.hidden = false;
     empty.textContent = currentPetId
-      ? "這隻寵物還沒有任何影片版本，先在「產生新影片」跑一次。"
+      ? "這隻寵物還沒有完成的影片版本，先在「產生新影片」跑一次。"
       : "請先選一隻寵物，並在「生成歷程」挑一個版本。";
     return;
   }
@@ -1212,16 +1229,17 @@ function renderRegenPanel() {
   const select = $("regen-job-select");
   const previous = select.value;
   select.innerHTML = "";
-  for (const job of currentJobs) {
+  for (const job of doneJobs) {
     const opt = document.createElement("option");
     opt.value = job.id;
     opt.textContent =
       "Job " + job.id + " · " + (STYLE_LABEL[job.style] || job.style) + " · " + job.scene_count + " 鏡頭";
     select.appendChild(opt);
   }
-  select.value = currentJobs.some((j) => String(j.id) === previous)
+  const playingIsDone = doneJobs.some((j) => j.id === playingJobId);
+  select.value = doneJobs.some((j) => String(j.id) === previous)
     ? previous
-    : String(playingJobId != null ? playingJobId : currentJobs[0].id);
+    : String(playingIsDone ? playingJobId : doneJobs[0].id);
   loadScenes(select.value);
 }
 

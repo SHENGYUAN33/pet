@@ -346,6 +346,14 @@ def api_get_job_video(job_id: int):
     job = get_generation_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"No generation job found with id {job_id}")
+    if job["output_path"] is None:
+        # A job that is still running or that failed has no file yet; say so
+        # rather than 500ing on a None path.
+        raise HTTPException(
+            status_code=409,
+            detail=f"這個版本還沒有影片（狀態：{job['status']}）"
+            + (f"：{job['error']}" if job["error"] else ""),
+        )
     path = Path(job["output_path"])
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Output file missing: {path}")

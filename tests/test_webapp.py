@@ -177,8 +177,9 @@ def test_get_unknown_job_returns_404(client):
 def test_get_job_returns_script_scenes(client):
     """The review UI lists a job's scenes so the reviewer can pick one to
     regenerate instead of typing a raw scene id."""
-    from pipeline.pet_repo import record_generation_job, save_pet
+    from pipeline.pet_repo import save_pet
     from pipeline.profile import PetProfile
+    from tests.conftest import completed_job
 
     save_pet(PetProfile.model_validate(_sample_profile_json()))
     script = {
@@ -188,15 +189,7 @@ def test_get_job_returns_script_scenes(client):
             {"scene_id": 2, "purpose": "intro", "subtitle": "我是測試貓", "narration": "你好"},
         ],
     }
-    job_id = record_generation_job(
-        TEST_PET_ID,
-        style="cute",
-        duration=30,
-        output_path="storage/output/does-not-need-to-exist.mp4",
-        disclosure_missing=[],
-        structure_issues=[],
-        script_json=script,
-    )
+    job_id = completed_job(TEST_PET_ID, script_json=script)
 
     response = client.get(f"/api/jobs/{job_id}")
 
@@ -367,3 +360,18 @@ def test_finished_task_whose_record_vanished_does_not_kill_the_thread():
 
     assert not thread.is_alive()
     assert tasks.get_task(task["task_id"]) is None
+
+
+def test_video_of_an_unfinished_job_returns_409_not_500(client):
+    """A job row now exists while the run is still going, so the video
+    endpoint has to cope with a job that has no output file yet."""
+    from pipeline.pet_repo import save_pet, start_generation_job
+    from pipeline.profile import PetProfile
+
+    save_pet(PetProfile.model_validate(_sample_profile_json()))
+    job_id = start_generation_job(TEST_PET_ID, style="cute", duration=30)
+
+    response = client.get(f"/api/jobs/{job_id}/video")
+
+    assert response.status_code == 409
+    assert "running" in response.json()["detail"]

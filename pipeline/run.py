@@ -6,7 +6,13 @@ import uuid
 
 from pipeline import config
 from pipeline.fact_check import find_missing_disclosures
-from pipeline.pet_repo import get_pet, record_generation_job
+from pipeline.pet_repo import (
+    fail_generation_job,
+    finish_generation_job,
+    get_pet,
+    start_generation_job,
+)
+from pipeline.profile import PetProfile
 from pipeline.progress import ProgressCallback, noop, scaled
 from pipeline.qa import validate_script_structure
 from pipeline.rendering import render_script
@@ -36,11 +42,53 @@ def generate_video(
     on_progress("讀取寵物資料", 0.01)
     profile = get_pet(pet_id)
     if profile is None:
+        # Raised before the job row exists on purpose: an unknown pet is a
+        # bad request, not a run that failed, and shouldn't litter the pet's
+        # history (it has none) with a FAILED row.
         raise ValueError(
             f"No pet found with id {pet_id!r} — import it first: "
             f"python -m pipeline.manage import-profile <path>"
         )
 
+    # Opened before the slow work so a crash or restart mid-run still leaves
+    # a record; _run_generation() below closes it either way.
+    job_id = start_generation_job(profile.pet_id, style=style, duration=duration)
+    try:
+        final_path = _run_generation(
+            profile,
+            style=style,
+            duration=duration,
+            job_id=job_id,
+            voice_sample=voice_sample,
+            music_track=music_track,
+            animate_scenes=animate_scenes,
+            video_provider=video_provider,
+            animate_prompt=animate_prompt,
+            on_progress=on_progress,
+        )
+    except Exception as e:
+        fail_generation_job(job_id, f"{type(e).__name__}: {e}")
+        raise
+
+    return final_path, job_id
+
+
+def _run_generation(
+    profile: PetProfile,
+    *,
+    style: str,
+    duration: int,
+    job_id: int,
+    voice_sample: str | None,
+    music_track: str | None,
+    animate_scenes: set[int] | None,
+    video_provider: str,
+    animate_prompt: str | None,
+    on_progress: ProgressCallback,
+) -> str:
+    """The body of generate_video() — split out so the job row is closed as
+    FAILED by exactly one except clause rather than by a try block wrapped
+    around the whole function."""
     llm = OllamaLLMProvider()
     # Script generation is the slowest step of a default (no-I2V) run, so it
     # reports per style rather than as one opaque block.
@@ -95,17 +143,15 @@ def generate_video(
     )
 
     on_progress("寫入生成紀錄", 0.99)
-    job_id = record_generation_job(
-        profile.pet_id,
-        style=style,
-        duration=duration,
+    finish_generation_job(
+        job_id,
         output_path=str(final_path),
         disclosure_missing=selected_missing,
         structure_issues=selected_structure_issues,
         script_json=script,
     )
 
-    return str(final_path), job_id
+    return str(final_path)
 
 
 def main():

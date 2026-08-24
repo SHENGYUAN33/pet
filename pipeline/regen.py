@@ -5,7 +5,14 @@ import uuid
 
 from pipeline import config
 from pipeline.fact_check import find_missing_disclosures
-from pipeline.pet_repo import get_generation_job, get_pet, record_generation_job
+from pipeline.pet_repo import (
+    fail_generation_job,
+    finish_generation_job,
+    get_generation_job,
+    get_pet,
+    start_generation_job,
+)
+from pipeline.profile import PetProfile
 from pipeline.progress import ProgressCallback, noop, scaled
 from pipeline.qa import validate_script_structure
 from pipeline.rendering import render_script
@@ -76,6 +83,50 @@ def regenerate_scene(
         narration=narration,
     )
 
+    # Opened before the render so an I2V regeneration that dies partway
+    # still shows up in the pet's history as a failed attempt, linked to
+    # the version it was regenerated from.
+    new_job_id = start_generation_job(
+        profile.pet_id,
+        style=job["style"],
+        duration=job["duration"],
+        parent_job_id=job_id,
+    )
+    try:
+        final_path = _render_revision(
+            profile,
+            script,
+            scene_id,
+            new_job_id=new_job_id,
+            voice_sample=voice_sample,
+            music_track=music_track,
+            animate=animate,
+            video_provider=video_provider,
+            animate_prompt=animate_prompt,
+            on_progress=on_progress,
+        )
+    except Exception as e:
+        fail_generation_job(new_job_id, f"{type(e).__name__}: {e}")
+        raise
+
+    return final_path, new_job_id
+
+
+def _render_revision(
+    profile: PetProfile,
+    script: dict,
+    scene_id: int,
+    *,
+    new_job_id: int,
+    voice_sample: str | None,
+    music_track: str | None,
+    animate: bool,
+    video_provider: str,
+    animate_prompt: str | None,
+    on_progress: ProgressCallback,
+) -> str:
+    """The body of regenerate_scene() — split out so the job row is closed as
+    FAILED by exactly one except clause."""
     missing = find_missing_disclosures(script, profile)
     structure_issues = validate_script_structure(script)
     script["_disclosure_check"] = {"missing_restrictions": missing}
@@ -99,15 +150,12 @@ def regenerate_scene(
     )
 
     on_progress("寫入生成紀錄", 0.99)
-    new_job_id = record_generation_job(
-        profile.pet_id,
-        style=job["style"],
-        duration=job["duration"],
+    finish_generation_job(
+        new_job_id,
         output_path=str(final_path),
         disclosure_missing=missing,
         structure_issues=structure_issues,
         script_json=script,
-        parent_job_id=job_id,
     )
 
-    return str(final_path), new_job_id
+    return str(final_path)

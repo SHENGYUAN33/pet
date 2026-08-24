@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from pipeline.db import get_session
-from pipeline.models import GenerationJob, Pet
+from pipeline.models import GenerationJob, JobStatus, Pet
 from pipeline.profile import PetProfile
 
 
@@ -37,33 +39,67 @@ def list_pets() -> list[PetProfile]:
         return [PetProfile.model_validate(row.profile_json) for row in rows]
 
 
-def record_generation_job(
+def start_generation_job(
     pet_id: str,
     *,
     style: str,
     duration: int,
-    output_path: str,
-    disclosure_missing: list[str],
-    structure_issues: list[str],
-    script_json: dict,
     parent_job_id: int | None = None,
 ) -> int:
-    """Record one completed generate_video()/regenerate_scene() run (see
-    pipeline/models.py GenerationJob docstring) and return its id."""
+    """Open a RUNNING job row before the work begins and return its id.
+
+    Called first so that a run which crashes, is cancelled, or is cut off by
+    a server restart still leaves a record of having been attempted — see
+    pipeline/models.py GenerationJob. Finish it with finish_generation_job()
+    or fail_generation_job()."""
     with get_session() as session:
         job = GenerationJob(
             pet_id=pet_id,
             style=style,
             duration=duration,
-            output_path=output_path,
-            disclosure_missing={"missing_restrictions": disclosure_missing},
-            structure_issues={"issues": structure_issues},
-            script_json=script_json,
-            parent_job_id=parent_job_id,
+            status=JobStatus.RUNNING.value,
+            disclosure_missing={"missing_restrictions": []},
+            structure_issues={"issues": []},
+            script_json={},
         )
+        if parent_job_id is not None:
+            job.parent_job_id = parent_job_id
         session.add(job)
         session.flush()  # assigns job.id without waiting for the outer commit
         return job.id
+
+
+def finish_generation_job(
+    job_id: int,
+    *,
+    output_path: str,
+    disclosure_missing: list[str],
+    structure_issues: list[str],
+    script_json: dict,
+) -> None:
+    """Mark a job DONE and attach what the finished run produced."""
+    with get_session() as session:
+        job = session.get(GenerationJob, job_id)
+        if job is None:
+            raise ValueError(f"No generation job found with id {job_id}")
+        job.status = JobStatus.DONE.value
+        job.output_path = output_path
+        job.disclosure_missing = {"missing_restrictions": disclosure_missing}
+        job.structure_issues = {"issues": structure_issues}
+        job.script_json = script_json
+        job.finished_at = datetime.now(UTC)
+
+
+def fail_generation_job(job_id: int, error: str) -> None:
+    """Mark a job FAILED with the reason, so the reviewer sees why instead of
+    a run that silently vanished."""
+    with get_session() as session:
+        job = session.get(GenerationJob, job_id)
+        if job is None:
+            raise ValueError(f"No generation job found with id {job_id}")
+        job.status = JobStatus.FAILED.value
+        job.error = error
+        job.finished_at = datetime.now(UTC)
 
 
 def get_generation_job(job_id: int) -> dict | None:
@@ -79,7 +115,9 @@ def get_generation_job(job_id: int) -> dict | None:
             "pet_id": row.pet_id,
             "style": row.style,
             "duration": row.duration,
+            "status": row.status,
             "output_path": row.output_path,
+            "error": row.error,
             "script_json": row.script_json,
             "parent_job_id": row.parent_job_id,
         }
@@ -98,12 +136,15 @@ def list_generation_jobs(pet_id: str) -> list[dict]:
                 "id": row.id,
                 "style": row.style,
                 "duration": row.duration,
+                "status": row.status,
                 "output_path": row.output_path,
+                "error": row.error,
                 "disclosure_missing": row.disclosure_missing,
                 "structure_issues": row.structure_issues,
                 "scene_count": len(row.script_json.get("scenes", [])),
                 "parent_job_id": row.parent_job_id,
                 "created_at": row.created_at.isoformat(),
+                "finished_at": row.finished_at.isoformat() if row.finished_at else None,
             }
             for row in rows
         ]
