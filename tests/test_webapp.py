@@ -424,3 +424,23 @@ def test_job_detail_includes_per_scene_rows(client):
     assert len(body["scene_jobs"]) == 1
     assert body["scene_jobs"][0]["video_provider"] == "wan"
     assert body["scene_jobs"][0]["animate_prompt"] == "貓輕輕搖尾巴"
+
+
+def test_startup_reaps_interrupted_jobs():
+    """Running the app's lifespan is what closes out jobs the previous
+    process died holding."""
+    from fastapi.testclient import TestClient
+
+    from pipeline.pet_repo import get_generation_job, save_pet, start_generation_job
+    from pipeline.profile import PetProfile
+    from webapp.main import app
+
+    save_pet(PetProfile.model_validate(_sample_profile_json()))
+    job_id = start_generation_job(TEST_PET_ID, style="cute", duration=30)
+
+    with TestClient(app):  # entering the context manager runs lifespan
+        pass
+
+    job = get_generation_job(job_id)
+    assert job["status"] == "failed"
+    assert "重新啟動" in job["error"]

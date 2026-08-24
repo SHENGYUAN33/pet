@@ -8,9 +8,14 @@ module is a thin HTTP wrapper, nothing here re-implements generation logic.
 
 Generation runs on a background thread (webapp/tasks.py) and the request
 returns a task_id immediately, because the web UI is the only interface
-non-technical reviewers have and an Image-to-Video run can take minutes. It
-is still not the persisted async Job state machine of
-docs/architecture.md §10 — task state lives in this process's memory.
+non-technical reviewers have and an Image-to-Video run can take minutes.
+
+Live task state (progress percentage, current step) is in-process by
+design: it describes a running thread, and a restart kills the thread, so
+persisting the percentage would only preserve a number about work that is
+no longer happening. What does survive a restart is the GenerationJob row
+and its per-scene rows, which is what the reaper below and pipeline.resume
+build on.
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -32,6 +38,7 @@ from pipeline.pet_repo import (
     list_generation_jobs,
     list_pets,
     list_scene_jobs,
+    reap_interrupted_jobs,
     save_pet,
 )
 from pipeline.profile import PetProfile
@@ -40,7 +47,24 @@ from pipeline.regen import regenerate_scene
 from pipeline.run import generate_video, resume_generation_job
 from webapp import tasks
 
-app = FastAPI(title="Pet Adoption Video — Review Tool")
+INTERRUPTED_REASON = "伺服器重新啟動，這次生成被中斷（可從已完成的鏡頭續跑）"
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Close out jobs the previous process was running when it died.
+
+    Without this a killed run leaves a row stuck at RUNNING and the review
+    UI shows "生成中" forever for work that nothing is doing. Marked failed
+    instead, they surface as resumable — the scenes they finished are still
+    on disk."""
+    reaped = reap_interrupted_jobs(INTERRUPTED_REASON)
+    if reaped:
+        print(f"[startup] marked {len(reaped)} interrupted job(s) as failed: {reaped}")
+    yield
+
+
+app = FastAPI(title="Pet Adoption Video — Review Tool", lifespan=lifespan)
 
 STATIC_DIR = Path(__file__).parent / "static"
 

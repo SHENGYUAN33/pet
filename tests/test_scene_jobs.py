@@ -282,3 +282,49 @@ def test_resume_reuses_the_original_animation_settings(stub_render, tmp_path, mo
     assert animated == [("stub-wan", "貓輕輕搖尾巴")], (
         "the resumed scene must still go through the original I2V provider and prompt"
     )
+
+
+def test_reaping_closes_running_jobs_and_their_unfinished_scenes():
+    """A run killed mid-flight leaves a row claiming to still be running.
+    Startup closes it so the UI shows 中斷 instead of 生成中 forever."""
+    job_id = pet_repo.start_generation_job(TEST_PET_ID, style="cute", duration=15)
+    pet_repo.start_scene_job(job_id, 1)
+    pet_repo.finish_scene_job(job_id, 1, clip_path="scene_1.mp4")
+    pet_repo.start_scene_job(job_id, 2)  # still "running" when the process died
+
+    reaped = pet_repo.reap_interrupted_jobs("伺服器重新啟動")
+
+    assert job_id in reaped
+    job = pet_repo.get_generation_job(job_id)
+    assert job["status"] == JobStatus.FAILED.value
+    assert job["error"] == "伺服器重新啟動"
+
+    by_id = {s["scene_id"]: s for s in pet_repo.list_scene_jobs(job_id)}
+    # The finished scene keeps its clip — that is what a resume reuses.
+    assert by_id[1]["status"] == JobStatus.DONE.value
+    assert by_id[1]["clip_path"] == "scene_1.mp4"
+    assert by_id[2]["status"] == JobStatus.FAILED.value
+
+
+def test_reaping_leaves_finished_jobs_alone(stub_render):
+    from tests.conftest import completed_job
+
+    job_id = completed_job(TEST_PET_ID, script_json=_script())
+
+    pet_repo.reap_interrupted_jobs("伺服器重新啟動")
+
+    assert pet_repo.get_generation_job(job_id)["status"] == JobStatus.DONE.value
+
+
+def test_a_cli_run_reaped_by_a_restart_heals_when_it_finishes():
+    """The one case reaping gets wrong: a CLI run in flight while the web app
+    boots. It is self-correcting because the CLI still owns the row."""
+    job_id = pet_repo.start_generation_job(TEST_PET_ID, style="cute", duration=15)
+    pet_repo.reap_interrupted_jobs("伺服器重新啟動")
+    assert pet_repo.get_generation_job(job_id)["status"] == JobStatus.FAILED.value
+
+    pet_repo.finish_generation_job(job_id, output_path="out.mp4")
+
+    job = pet_repo.get_generation_job(job_id)
+    assert job["status"] == JobStatus.DONE.value
+    assert job["error"] is None

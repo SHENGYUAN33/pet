@@ -5,13 +5,22 @@ involved), and the web UI is the only interface a shelter volunteer has — so
 the HTTP request must not be the thing that waits. Requests start a task and
 return immediately; the browser polls for progress.
 
-This is deliberately *not* the async Job state machine of
-docs/architecture.md §10: state lives in this process's memory, so a server
-restart loses in-flight task state (the pipeline's own GenerationJob record is
-still written when the work finishes, so no finished work is lost). A real
-multi-user deployment needs Celery/Temporal plus persisted job rows — out of
-scope for this slice, but the HTTP surface here (start → poll → result) is
-the same shape a queued implementation would expose.
+What lives here is only the *live* view of a running thread: the progress
+percentage and the current step. That is in-process on purpose — a restart
+kills the thread, so persisting "60% done" would preserve a number about
+work that is no longer happening.
+
+Durable state lives in the database instead: pipeline.pet_repo opens a
+GenerationJob row (and one SceneJob row per scene) when a run starts and
+closes it when it ends, so a run interrupted by a restart is visible
+afterwards and can be continued from the scenes it finished
+(webapp.main's startup reaper plus pipeline.resume).
+
+Still not the full state machine of docs/architecture.md §10 — there is no
+queue (a task starts the moment it is created) and no distribution across
+workers. A multi-user deployment needs Celery/Temporal, but the HTTP
+surface here (start → poll → result) is the shape a queued implementation
+would expose.
 
 Only one task runs at a time: generation saturates the GPU/CPU (I2V models,
 FFmpeg), so running two concurrently would just make both slower and risk

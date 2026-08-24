@@ -288,3 +288,47 @@ def _require_scene_job(session, job_id: int, scene_id: int) -> SceneJob:
     if scene is None:
         raise ValueError(f"No scene job for job {job_id} scene {scene_id}")
     return scene
+
+
+def reap_interrupted_jobs(reason: str) -> list[int]:
+    """Close jobs left RUNNING with no process behind them and return their ids.
+
+    A job row is opened when a run starts and closed when it ends, so a run
+    killed mid-flight (server restart, Ctrl-C, power loss) leaves a row that
+    claims to still be running forever. Called at web app startup, when any
+    row still marked RUNNING must be a leftover: the threads that owned them
+    died with the previous process.
+
+    Their scenes are closed the same way, except the ones that had already
+    finished — those clips are on disk and are exactly what a resume reuses.
+
+    A run started from the CLI while the web app boots would be reaped here
+    too. That is wrong but self-correcting: the CLI still owns the row and
+    finish_generation_job() clears the status and error when it completes.
+    """
+    with get_session() as session:
+        jobs = (
+            session.query(GenerationJob)
+            .filter(GenerationJob.status == JobStatus.RUNNING.value)
+            .all()
+        )
+        now = datetime.now(UTC)
+        for job in jobs:
+            job.status = JobStatus.FAILED.value
+            job.error = reason
+            job.finished_at = now
+        job_ids = [job.id for job in jobs]
+
+        if job_ids:
+            (
+                session.query(SceneJob)
+                .filter(
+                    SceneJob.job_id.in_(job_ids),
+                    SceneJob.status == JobStatus.RUNNING.value,
+                )
+                .update(
+                    {"status": JobStatus.FAILED.value, "error": reason, "finished_at": now},
+                    synchronize_session=False,
+                )
+            )
+        return job_ids
