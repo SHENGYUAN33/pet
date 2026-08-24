@@ -141,9 +141,13 @@ pytest
 應該看到全部通過（目前 95 項）。不需要 GPU、不需要 Ollama、不需要 FFmpeg，
 但**需要 PostgreSQL 已經在跑**（也就是 2.5 要先做完）。
 
-> **已知問題**：資料庫沒開時，`pytest` 會**沒有任何輸出地卡住**，而不是跳過那些測試。
-> 測試裡雖然有「資料庫連不上就跳過」的判斷，但那個判斷本身會卡在連線上。
-> 如果 `pytest` 執行後畫面一直空白，先確認 `docker ps` 看得到 `dogcat-postgres-1`。
+> **已知問題**：資料庫沒開時，測試**不會失敗，但會慢到像當掉**。
+> 需要資料庫的那 5 個測試檔（`test_pet_repo`／`test_job_lifecycle`／`test_scene_jobs`／
+> `test_migrations`／`test_webapp`）各有一個「連不上就跳過」的判斷，
+> 但那個判斷沒有設連線逾時，每一個都要卡好幾分鐘才放棄。
+> 實測資料庫關閉時的結果是 **42 passed、53 skipped，花了 21 分 46 秒**（正常應是 8 秒內）。
+> 而且收集階段就卡住，過程中畫面完全空白。
+> 如果 `pytest` 執行後一直沒有輸出，先確認 `docker ps` 看得到 `dogcat-postgres-1`。
 
 ### 2.8 選用：安裝 Image-to-Video（需要 NVIDIA GPU）
 
@@ -543,7 +547,7 @@ dogcat/
 | `port 5432 already in use` | 跑錯專案的 compose | 本專案用 **5433**，確認在 dogcat 目錄下執行 |
 | 腳本生成卡住或連線錯誤指向 11434 | Ollama 沒跑 | `ollama list` 測試，從系統匣啟動 |
 | `FileNotFoundError: ffmpeg` | FFmpeg 不在 PATH | 開新終端機；仍失敗則重新登入 Windows |
-| `pytest` 沒有任何輸出、一直卡住 | PostgreSQL 沒開（已知問題：應該跳過卻卡住） | `docker compose up -d` 後重跑 |
+| `pytest` 長時間沒有輸出（可達 20 分鐘） | PostgreSQL 沒開，跳過判斷沒有連線逾時 | `docker compose up -d` 後重跑；會變回 8 秒內跑完 |
 | 影片沒有聲音 | 沒給語音樣本 | 傳 `--voice-sample`；重生時也要再傳一次 |
 | 字幕是方框或亂碼 | 字型路徑不對 | 檢查 `.env` 的 `DRAWTEXT_FONT_FILE` 指向存在的中文字型 |
 | 網頁一直顯示「生成中」但沒進度 | 上一個 process 死掉留下的紀錄 | 重啟 uvicorn，啟動時會自動收尾成失敗並可續跑 |
