@@ -17,8 +17,7 @@ class LLMProvider(ABC):
     """
 
     @abstractmethod
-    def complete(self, prompt: str, *, response_schema: dict | None = None) -> str:
-        ...
+    def complete(self, prompt: str, *, response_schema: dict | None = None) -> str: ...
 
 
 class VLMProvider(ABC):
@@ -28,8 +27,7 @@ class VLMProvider(ABC):
     """
 
     @abstractmethod
-    def analyze_media(self, media_url: str, *, instruction: str) -> dict:
-        ...
+    def analyze_media(self, media_url: str, *, instruction: str) -> dict: ...
 
 
 class VideoGenerationProvider(ABC):
@@ -59,8 +57,7 @@ class TTSProvider(ABC):
     """
 
     @abstractmethod
-    def synthesize(self, text: str, voice_profile: str, language: str) -> str:
-        ...
+    def synthesize(self, text: str, voice_profile: str, language: str) -> str: ...
 
 
 class MusicProvider(ABC):
@@ -70,8 +67,7 @@ class MusicProvider(ABC):
     """
 
     @abstractmethod
-    def generate_track(self, mood: str, duration_seconds: int) -> str:
-        ...
+    def generate_track(self, mood: str, duration_seconds: int) -> str: ...
 
 
 class ModerationProvider(ABC):

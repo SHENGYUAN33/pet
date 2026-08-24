@@ -338,3 +338,32 @@ def test_generate_while_another_task_runs_returns_409(client):
         release.set()
         with tasks._lock:
             tasks._tasks.clear()
+
+
+def test_finished_task_whose_record_vanished_does_not_kill_the_thread():
+    """A task record can disappear while its thread still runs (shutdown, or a
+    test clearing state). The thread must finish quietly instead of dying with
+    an unhandled KeyError."""
+    import threading
+
+    from webapp import tasks
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def work(on_progress):
+        started.set()
+        release.wait(timeout=5)
+        return {}
+
+    task = tasks.start_task(kind="generate", pet_id="PET-GONE", label="消失的工作", work=work)
+    thread = next(t for t in threading.enumerate() if t.name == f"task-{task['task_id']}")
+    assert started.wait(timeout=5)
+
+    with tasks._lock:
+        tasks._tasks.clear()
+    release.set()
+    thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert tasks.get_task(task["task_id"]) is None

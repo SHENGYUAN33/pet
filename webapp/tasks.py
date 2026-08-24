@@ -119,7 +119,12 @@ def start_task(
             traceback.print_exc()
             result, status, error = None, "error", f"{type(e).__name__}: {e}"
         with _lock:
-            task = _tasks[task_id]
+            # The record can be gone (server shutdown clears it) and a thread
+            # that dies here would take its traceback with it, so treat a
+            # missing record as "nobody is waiting for this result".
+            task = _tasks.get(task_id)
+            if task is None:
+                return
             task["status"] = status
             task["result"] = result
             task["error"] = error
