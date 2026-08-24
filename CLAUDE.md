@@ -76,7 +76,14 @@
 
 `GenerationJob` 仍是「完成後留一筆紀錄」的攤平 log，**不是**完整的非同步 Job 狀態機（docs/architecture.md §10 的狀態機仍未實作，目前沒有 PENDING/RUNNING 這種中間狀態，都是跑完才寫進 DB）。開發時請先確認目前實際完成到哪個階段，不要假設後期功能已存在。
 
-⚠️ **目前沒有上 Alembic**：`pipeline/db.py` 的 `init_db()` 只用 `Base.metadata.create_all()`，改 `pipeline/models.py` 的既有表結構（不是新增表）不會自動反映到已存在的資料庫，需要手動 `DROP TABLE` 該表後重跑 `python -m pipeline.manage init-db` 重建（規模還小，先不上遷移工具；正式有資料量後要改用 Alembic）。
+**Schema 演進走 Alembic**（`migrations/`）：改了 `pipeline/models.py` 的既有表結構就要跟著出一份 migration——
+```bash
+alembic revision --autogenerate -m "<改了什麼>"   # 對照 models.py 與現有 DB 產生差異
+alembic upgrade head                              # 套用
+```
+連線字串**刻意不寫在 `alembic.ini`**（那個檔進版控、URL 帶密碼），由 `migrations/env.py` 從 `pipeline.config.DATABASE_URL` 注入。`tests/test_migrations.py` 會擋下「改了 model 卻忘記寫 migration」（比對 `models.py` 與實際 DB schema）以及 `alembic.ini` 裡意外出現連線字串。
+
+`init_db()`（`python -m pipeline.manage init-db`）保留給**全新的空資料庫**（測試、乾淨的本機環境）；它是 `create_all()`，只會補上「缺少的表」，**不會**改既有表的結構，所以不能拿來做 schema 演進。
 
 ### PoC 實作邊界（開源優先，對應規劃時的技術選型決策，MVP 階段陸續補上）
 - LLM：Ollama + Qwen2.5-7B-Instruct（`pipeline/config.py` 可透過 `.env` 覆寫模型/host）
@@ -137,7 +144,8 @@ ollama list
 
 # 啟動 PostgreSQL（需先手動啟動 Docker Desktop）
 docker compose up -d
-python -m pipeline.manage init-db
+python -m pipeline.manage init-db   # 只用於全新的空資料庫
+alembic upgrade head                # 既有資料庫：套用尚未執行的 schema 變更
 
 # 匯入寵物 Profile 到資料庫（storage/profiles/*.json 只是匯入格式，不再是 pipeline 讀取來源）
 python -m pipeline.manage import-profile storage/profiles/<pet_id>.json

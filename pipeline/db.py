@@ -13,9 +13,15 @@ SessionLocal = sessionmaker(bind=engine)
 
 
 def init_db() -> None:
-    """Create tables if they don't exist. Schema is new and simple enough
-    that Alembic migrations are unnecessary for now — revisit once the
-    schema needs to change under real data."""
+    """Create tables if they don't exist — for a throwaway database (tests,
+    a scratch local instance) where starting from empty is the point.
+
+    This is NOT how the schema evolves any more. Changing an existing table
+    means writing an Alembic migration (`alembic revision --autogenerate`,
+    then `alembic upgrade head`); create_all() only ever adds missing
+    tables, so it would silently leave an existing database on the old
+    shape. See migrations/ and the README's schema section.
+    """
     Base.metadata.create_all(engine)
 
 
