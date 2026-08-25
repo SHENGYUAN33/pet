@@ -327,6 +327,14 @@ def api_regenerate_scene(job_id: int, req: RegenerateSceneRequest):
     job = get_generation_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"No generation job found with id {job_id}")
+    # Motion guidance with animation switched off means the shot renders as
+    # Ken Burns and the description is thrown away — which reads afterwards
+    # as "I2V changed nothing" rather than as the contradiction it is.
+    if req.animate_prompt and not req.animate:
+        raise HTTPException(
+            status_code=400,
+            detail="填了動作描述，但沒有啟用動態化 — 請選一個影片生成模型，否則這顆鏡頭只會做照片運鏡",
+        )
 
     def work(on_progress: ProgressCallback) -> dict:
         output_path, new_job_id = regenerate_scene(

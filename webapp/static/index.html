@@ -731,11 +731,12 @@ textarea.auto { min-height: 76px; resize: vertical; font-family: inherit; }
                 <input type="text" name="animate_scenes" placeholder="2,4" />
               </label>
               <label class="field">
-                <span class="lbl">影片生成模型</span>
+                <span class="lbl">影片生成模型<span class="sub">選了模型才會啟用動態化</span></span>
                 <select name="video_provider">
-                  <option value="svd">SVD（已實測可用）</option>
+                  <option value="">不動態化（照片用 Ken Burns）</option>
+                  <option value="wan">Wan2.2（動作品質最好，需先開 ComfyUI）</option>
+                  <option value="svd">SVD（已實測可用，但只會動鏡頭/背景）</option>
                   <option value="cogvideox">CogVideoX-5b-I2V</option>
-                  <option value="wan">Wan2.2</option>
                 </select>
               </label>
               <label class="field">
@@ -796,16 +797,13 @@ textarea.auto { min-height: 76px; resize: vertical; font-family: inherit; }
             <details class="adv">
               <summary>AI 動態化（選填）</summary>
               <div class="adv-body">
-                <label class="check">
-                  <input type="checkbox" name="animate" />
-                  <span>用 Image-to-Video 取代 Ken Burns</span>
-                </label>
                 <label class="field">
-                  <span class="lbl">影片生成模型</span>
+                  <span class="lbl">動態化這顆鏡頭<span class="sub">選了模型就會啟用，一顆鏡頭數分鐘</span></span>
                   <select name="video_provider">
-                    <option value="svd">SVD（已實測可用）</option>
+                    <option value="">不動態化（照片用 Ken Burns）</option>
+                    <option value="wan">Wan2.2（動作品質最好，需先開 ComfyUI）</option>
+                    <option value="svd">SVD（已實測可用，但只會動鏡頭/背景）</option>
                     <option value="cogvideox">CogVideoX-5b-I2V</option>
-                    <option value="wan">Wan2.2</option>
                   </select>
                 </label>
                 <label class="field">
@@ -1432,6 +1430,20 @@ $("generate-form").addEventListener("submit", async (e) => {
     animate_prompt: form.get("animate_prompt") || null,
     recap_unused_assets: form.get("recap_unused_assets") === "on",
   };
+  // Both halves are needed, and getting one without the other used to mean
+  // the whole setting was dropped without a word.
+  if (body.video_provider && !body.animate_scenes) {
+    toast("選了動態化模型，但沒填要動態化哪些鏡頭", "err");
+    return;
+  }
+  if (!body.video_provider && body.animate_scenes) {
+    toast("填了要動態化的鏡頭，但影片生成模型是「不動態化」", "err");
+    return;
+  }
+  if (!body.video_provider) {
+    body.animate_scenes = null;
+    body.video_provider = "svd";
+  }
   try {
     const task = await api("/api/pets/" + encodeURIComponent(currentPetId) + "/generate", {
       method: "POST",
@@ -1467,8 +1479,11 @@ $("regenerate-form").addEventListener("submit", async (e) => {
     narration: form.get("narration") || null,
     voice_sample: form.get("voice_sample") || null,
     music_track: form.get("music_track") || null,
-    animate: form.get("animate") === "on",
-    video_provider: form.get("video_provider"),
+    // One control, not two: picking a model is what turns animation on. The
+    // pair it replaced let someone choose Wan2.2, write a motion description
+    // and still get Ken Burns, because the separate checkbox was unticked.
+    animate: Boolean(form.get("video_provider")),
+    video_provider: form.get("video_provider") || "svd",
     animate_prompt: form.get("animate_prompt") || null,
   };
   try {

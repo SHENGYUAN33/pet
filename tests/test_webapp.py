@@ -473,3 +473,21 @@ def test_scene_plan_flags_a_length_that_cannot_be_built(client):
 
 def test_scene_plan_for_an_unknown_pet_returns_404(client):
     assert client.get("/api/pets/PET-DOES-NOT-EXIST/scene-plan").status_code == 404
+
+
+def test_regenerate_rejects_motion_guidance_without_animation(client):
+    """Choosing a model and writing a motion description but leaving
+    animation off used to render Ken Burns and silently discard both, which
+    reads as "the I2V settings did nothing"."""
+    from tests.conftest import completed_job
+
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+    job_id = completed_job(TEST_PET_ID, script_json={"scenes": [{"scene_id": 1}]})
+
+    response = client.post(
+        f"/api/jobs/{job_id}/regenerate-scene",
+        json={"scene_id": 1, "animate": False, "video_provider": "wan", "animate_prompt": "貓眨眼"},
+    )
+
+    assert response.status_code == 400
+    assert "動態化" in response.json()["detail"]
