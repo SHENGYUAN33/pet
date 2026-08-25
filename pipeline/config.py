@@ -122,9 +122,36 @@ WAN_WIDTH = int(os.getenv("WAN_WIDTH", "704"))
 WAN_HEIGHT = int(os.getenv("WAN_HEIGHT", "1280"))
 WAN_FPS = int(os.getenv("WAN_FPS", "24"))
 WAN_DEFAULT_PROMPT = os.getenv("WAN_DEFAULT_PROMPT", "The subject moves naturally and subtly.")
+# Appended to every prompt, the caller's own included. What people ask for
+# ("cinematic motion", "make this come alive") reads to the model as camera
+# work, and it answers with a push-in or a drift — the photo's framing swims
+# while the pet barely moves. Nobody writing a motion description should have
+# to know to defend against that, so the camera constraint is not theirs to
+# remember. Set WAN_PROMPT_SUFFIX="" to opt out.
+WAN_PROMPT_SUFFIX = os.getenv(
+    "WAN_PROMPT_SUFFIX",
+    " Static locked-off camera, fixed framing, no camera movement, no zoom, no pan.",
+)
+# Wan's own published negative prompt, minus its anti-stillness terms
+# (静态 / 静止 / 静止不动的画面). Those exist to stop the model returning a
+# frozen frame, but here they push it the other way: told that stillness is
+# bad, the cheapest motion it can produce is moving the camera, which is
+# exactly the shaky push-in this pipeline doesn't want. The quality and
+# anatomy terms are kept, and camera-movement and warping terms added.
 WAN_NEGATIVE_PROMPT = os.getenv(
     "WAN_NEGATIVE_PROMPT",
-    "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，"
+    "镜头运动，镜头推近，镜头拉远，镜头晃动，变焦，画面抖动，画面漂移，形变，扭曲，"
+    "色调艳丽，过曝，细节模糊不清，字幕，风格，作品，画作，画面，整体发灰，"
     "最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，"
-    "畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
+    "畸形的，毁容的，形态畸形的肢体，手指融合，杂乱的背景，三条腿，背景人很多，倒着走",
 )
+# Sampler settings. Previously hard-coded in wan_provider.py's graph, which
+# put the two knobs that decide how violently the picture moves out of reach
+# of a .env tweak. shift especially: it scales how far the sampler travels
+# from the source frame, so lowering it is the direct fix for "the whole
+# image is swimming" — at the cost of a subtler animation.
+WAN_CFG = float(os.getenv("WAN_CFG", "5.0"))
+WAN_SHIFT = float(os.getenv("WAN_SHIFT", "5.0"))
+# Fixed by default so re-running a scene reproduces it; change it to draw a
+# different take of the same photo when a result comes out ugly.
+WAN_SEED = int(os.getenv("WAN_SEED", "47"))

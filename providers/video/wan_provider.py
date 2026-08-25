@@ -10,6 +10,20 @@ from pipeline import config
 from providers.base import VideoGenerationProvider
 
 
+def _with_camera_constraint(prompt: str) -> str:
+    """Add the locked-camera instruction to whatever motion the caller asked
+    for.
+
+    Left to itself the model reads a request for motion as a request for
+    camera work and answers with a push-in, so the pet barely moves while the
+    whole frame drifts. The constraint therefore belongs to every prompt, not
+    to whoever remembered to type it — appended rather than prepended so the
+    caller's own description still leads."""
+    if not config.WAN_PROMPT_SUFFIX or config.WAN_PROMPT_SUFFIX.strip() in prompt:
+        return prompt
+    return prompt.rstrip() + config.WAN_PROMPT_SUFFIX
+
+
 class WanProvider(VideoGenerationProvider):
     """Open-source Image-to-Video via Wan2.2 (Wan-AI, Apache 2.0), run
     through a locally-hosted ComfyUI server with an FP8-quantized
@@ -139,9 +153,9 @@ class WanProvider(VideoGenerationProvider):
                     "model": ["22", 0],
                     "image_embeds": ["78", 0],
                     "steps": config.WAN_SAMPLE_STEPS,
-                    "cfg": 5.0,
-                    "shift": 8.0,
-                    "seed": 47,
+                    "cfg": config.WAN_CFG,
+                    "shift": config.WAN_SHIFT,
+                    "seed": config.WAN_SEED,
                     "force_offload": True,
                     "scheduler": "unipc",
                     "riflex_freq_index": 0,
@@ -241,7 +255,10 @@ class WanProvider(VideoGenerationProvider):
 
         output_prefix = Path(output_path).stem
         api_prompt = self._build_prompt(
-            image_filename, prompt or config.WAN_DEFAULT_PROMPT, num_frames, output_prefix
+            image_filename,
+            _with_camera_constraint(prompt or config.WAN_DEFAULT_PROMPT),
+            num_frames,
+            output_prefix,
         )
 
         resp = requests.post(
