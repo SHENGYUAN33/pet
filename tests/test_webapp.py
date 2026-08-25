@@ -444,3 +444,32 @@ def test_startup_reaps_interrupted_jobs():
     job = get_generation_job(job_id)
     assert job["status"] == "failed"
     assert "重新啟動" in job["error"]
+
+
+def test_scene_plan_reports_assets_the_video_cannot_fit(client):
+    """The generate form asks this before starting a run, so 13 assets in a
+    30-second video reads as "7 used, 6 left over" up front."""
+    profile = _sample_profile_json()
+    profile["media"]["assets"] = [
+        {"asset_id": f"photo_{i:02d}", "type": "photo", "url": f"p{i}.jpg"} for i in range(1, 14)
+    ]
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=profile)
+
+    plan = client.get(f"/api/pets/{TEST_PET_ID}/scene-plan?duration=30").json()
+
+    assert plan["feasible"] is True
+    assert plan["asset_count"] == 13
+    assert plan["usable_assets"] == config.MAX_SCENES
+    assert plan["unused_assets"] == 13 - config.MAX_SCENES
+
+
+def test_scene_plan_flags_a_length_that_cannot_be_built(client):
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+
+    plan = client.get(f"/api/pets/{TEST_PET_ID}/scene-plan?duration=60").json()
+
+    assert plan["feasible"] is False
+
+
+def test_scene_plan_for_an_unknown_pet_returns_404(client):
+    assert client.get("/api/pets/PET-DOES-NOT-EXIST/scene-plan").status_code == 404

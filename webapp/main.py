@@ -41,6 +41,7 @@ from pipeline.pet_repo import (
     reap_interrupted_jobs,
     save_pet,
 )
+from pipeline.planning import ScenePlan, plan_scenes
 from pipeline.profile import PetProfile
 from pipeline.progress import ProgressCallback
 from pipeline.regen import regenerate_scene
@@ -240,6 +241,19 @@ class RegenerateSceneRequest(BaseModel):
     animate: bool = False
     video_provider: str = "svd"
     animate_prompt: str | None = None
+
+
+@app.get("/api/pets/{pet_id}/scene-plan")
+def api_scene_plan(pet_id: str, duration: int = 30) -> ScenePlan:
+    """How many of this pet's assets a video of this length can show.
+
+    The generate form asks as the length changes, so "you have 13 assets and
+    this video will use 7 of them" is on screen before the run starts rather
+    than something to work out from the output afterwards."""
+    profile = get_pet(pet_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail=f"No pet found with id {pet_id!r}")
+    return plan_scenes(duration, len(profile.media.assets))
 
 
 @app.get("/api/pets")

@@ -112,6 +112,7 @@ h1, h2, h3, h4 { margin: 0; font-weight: 650; }
   margin: 0 0 10px;
 }
 .hint { font-size: 12px; color: var(--text-faint); line-height: 1.5; }
+.hint.warn { color: var(--warn); }
 
 /* ---------- cards ---------- */
 .card {
@@ -701,6 +702,7 @@ textarea.auto { min-height: 76px; resize: vertical; font-family: inherit; }
             <span class="lbl">影片長度<span class="sub">秒，一般為 30 或 15</span></span>
             <input type="number" name="duration" value="30" min="5" max="120" />
           </label>
+          <p class="hint" id="scene-plan"></p>
 
           <details class="adv">
             <summary>音訊素材（選填）</summary>
@@ -1111,6 +1113,70 @@ async function selectPet(petId, keepPlaying) {
   }
   playJob(playingJobId);
   renderRegenPanel();
+  refreshScenePlan();
+}
+
+/* ---------- scene plan ----------
+   A 30s video is 5-7 shots and each shot shows one asset, so a pet with 13
+   photos can only ever get 7 of them on screen. Nobody can derive that from
+   the form, so ask the server what this length can hold and say it here,
+   before the run rather than after it. */
+let scenePlanTimer = null;
+
+function scheduleScenePlan() {
+  clearTimeout(scenePlanTimer);
+  scenePlanTimer = setTimeout(refreshScenePlan, 250);
+}
+
+async function refreshScenePlan() {
+  const host = $("scene-plan");
+  if (!host) return;
+  const duration = parseInt($("generate-form").elements.duration.value, 10);
+  if (!currentPetId || isNaN(duration)) {
+    host.textContent = "";
+    return;
+  }
+
+  let plan;
+  try {
+    plan = await api(
+      "/api/pets/" + encodeURIComponent(currentPetId) + "/scene-plan?duration=" + duration
+    );
+  } catch (err) {
+    host.textContent = "";
+    return;
+  }
+
+  if (!plan.feasible) {
+    host.className = "hint warn";
+    host.textContent =
+      `⚠ ${plan.duration} 秒沒辦法由 ${plan.fewest_scenes}–${plan.most_scenes} 顆鏡頭組成` +
+      `（每顆 3–6 秒、共 5–7 顆），腳本的時間軸會對不上。` +
+      `可行長度是 ${plan.shortest_feasible}–${plan.longest_feasible} 秒。`;
+    return;
+  }
+
+  host.className = "hint";
+  const shots =
+    plan.fewest_scenes === plan.most_scenes
+      ? `${plan.most_scenes} 顆鏡頭`
+      : `${plan.fewest_scenes}–${plan.most_scenes} 顆鏡頭`;
+  let text = `${plan.duration} 秒 ≈ ${shots}，每顆鏡頭用一個素材。`;
+
+  if (!plan.asset_count) {
+    text += " 目前還沒有素材。";
+  } else if (plan.assets_will_repeat) {
+    host.className = "hint warn";
+    text +=
+      ` 你只有 ${plan.asset_count} 個素材，少於最少鏡頭數，會有素材重複出現。`;
+  } else if (plan.unused_assets) {
+    text +=
+      ` 你有 ${plan.asset_count} 個素材，這支影片最多用到 ${plan.usable_assets} 個，` +
+      `其餘 ${plan.unused_assets} 個不會出現（由腳本挑選；事後可用單鏡頭重生換素材）。`;
+  } else {
+    text += ` 你的 ${plan.asset_count} 個素材都用得上。`;
+  }
+  host.textContent = text;
 }
 
 /* ---------- jobs ---------- */
@@ -1339,6 +1405,8 @@ document.querySelectorAll(".tab").forEach((t) => {
 });
 
 /* ---------- generate ---------- */
+$("generate-form").elements.duration.addEventListener("input", scheduleScenePlan);
+
 $("generate-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   if (!currentPetId) { toast("請先從左側選一隻寵物", "err"); return; }
