@@ -34,6 +34,17 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+class StubVideoProvider:
+    """Stands in for an I2V provider. Carries the name it was asked for so
+    tests can assert which one rendering picked, and a preflight that always
+    passes (render_script checks provider availability before narration)."""
+
+    def __init__(self, name: str):
+        self.name = name
+
+    def preflight(self) -> None: ...
+
+
 def _script(scene_count: int = 3) -> dict:
     return {
         "pet_id": TEST_PET_ID,
@@ -83,7 +94,7 @@ def stub_render(monkeypatch, tmp_path):
         "silence_scenes",
         lambda script, out: {s["scene_id"]: "a.wav" for s in script["scenes"]},
     )
-    monkeypatch.setattr(rendering, "get_video_provider", lambda name: f"stub-{name}")
+    monkeypatch.setattr(rendering, "get_video_provider", StubVideoProvider)
     monkeypatch.setattr(
         rendering,
         "animate_photo",
@@ -267,7 +278,7 @@ def test_resume_reuses_the_original_animation_settings(stub_render, tmp_path, mo
     animated: list[tuple[str, str | None]] = []
 
     def record_animation(src, provider, *, duration, output_path, prompt):
-        animated.append((provider, prompt))
+        animated.append((provider.name, prompt))
         Path(output_path).write_bytes(b"i2v")
 
     monkeypatch.setattr(rendering, "animate_photo", record_animation)
@@ -279,7 +290,7 @@ def test_resume_reuses_the_original_animation_settings(stub_render, tmp_path, mo
     monkeypatch.setattr(rendering, "build_scene_clip", working_build)
     run.resume_generation_job(job_id)
 
-    assert animated == [("stub-wan", "貓輕輕搖尾巴")], (
+    assert animated == [("wan", "貓輕輕搖尾巴")], (
         "the resumed scene must still go through the original I2V provider and prompt"
     )
 

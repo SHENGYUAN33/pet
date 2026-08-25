@@ -30,6 +30,19 @@ class VideoGenerationProvider(ABC):
     interface only needs to produce *a* clip, not one of the exact target
     duration."""
 
+    def preflight(self) -> None:
+        """Raise if this provider clearly cannot run right now.
+
+        Callers use it to fail before the expensive work leading up to the
+        first animate_image call. Only providers with a checkable external
+        dependency need to override it (Wan talks to a ComfyUI server that
+        has to be started by hand); the default is a no-op, so a provider
+        that can't cheaply tell in advance simply reports at call time.
+
+        This is a fast check, not a guarantee: the service can still go away
+        between here and the call, which is why animate_image keeps its own
+        error handling."""
+
     @abstractmethod
     def animate_image(
         self,

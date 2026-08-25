@@ -205,14 +205,10 @@ class WanProvider(VideoGenerationProvider):
                     raise RuntimeError(f"ComfyUI job {prompt_id} failed: {status}")
             time.sleep(poll_interval)
 
-    def animate_image(
-        self,
-        image_path: str,
-        *,
-        duration_seconds: float,
-        output_path: str,
-        prompt: str | None = None,
-    ) -> str:
+    def preflight(self) -> None:
+        """This provider never starts ComfyUI itself (same as rendering not
+        starting Ollama or PostgreSQL — see STARTUP.md), so a stopped server
+        is the most common way a run fails."""
         try:
             requests.get(f"{self.base_url}/system_stats", timeout=5)
         except requests.exceptions.ConnectionError as e:
@@ -221,6 +217,19 @@ class WanProvider(VideoGenerationProvider):
                 f"cd {config.WAN_COMFYUI_DIR} && .venv/Scripts/activate && "
                 f"python main.py --listen 127.0.0.1 --port 8188"
             ) from e
+
+    def animate_image(
+        self,
+        image_path: str,
+        *,
+        duration_seconds: float,
+        output_path: str,
+        prompt: str | None = None,
+    ) -> str:
+        # Repeated per call, not just at preflight time: the server can be
+        # stopped between scenes, and eight minutes of Wan work per scene
+        # makes that a real window.
+        self.preflight()
 
         image_filename = self._upload_image(image_path)
 

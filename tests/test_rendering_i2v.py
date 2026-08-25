@@ -154,3 +154,42 @@ def test_render_script_rejects_unknown_visual_source_before_narration(photo_prof
         render_script(photo_profile, script, work_dir)
 
     assert not (work_dir / "audio").exists(), "should fail before generating scene audio"
+
+
+def test_render_script_preflights_the_video_provider_before_narration(
+    photo_profile, tmp_path, monkeypatch
+):
+    """A stopped ComfyUI server must surface before the TTS pass, not after
+    it — the whole point of checking is to not spend that time first."""
+
+    class UnreachableProvider(FakeVideoProvider):
+        def preflight(self) -> None:
+            raise RuntimeError("ComfyUI server not reachable at http://127.0.0.1:8188")
+
+    monkeypatch.setattr("pipeline.rendering.get_video_provider", lambda name: UnreachableProvider())
+
+    work_dir = tmp_path / "work"
+
+    with pytest.raises(RuntimeError, match="not reachable"):
+        render_script(photo_profile, _script_with_one_photo_scene(), work_dir, animate_scenes={1})
+
+    assert not (work_dir / "audio").exists(), "should fail before generating scene audio"
+
+
+def test_render_script_does_not_preflight_when_nothing_is_animated(
+    photo_profile, tmp_path, monkeypatch
+):
+    """Scenes rendered from real footage or Ken Burns never touch the I2V
+    provider, so an unavailable one must not block them."""
+
+    class ExplodingProvider(FakeVideoProvider):
+        def preflight(self) -> None:
+            raise AssertionError("preflight should not run without animated scenes")
+
+    monkeypatch.setattr("pipeline.rendering.get_video_provider", lambda name: ExplodingProvider())
+
+    final_path = render_script(
+        photo_profile, _script_with_one_photo_scene(duration=3.0), tmp_path / "work"
+    )
+
+    assert abs(_probe_duration(final_path) - 3.0) < 0.2

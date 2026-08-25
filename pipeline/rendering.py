@@ -93,9 +93,23 @@ def render_script(
     # discovering that at scene 1 wastes a full narration pass first. Scenes
     # whose clip is being reused aren't checked — their source may legitimately
     # have been removed since that clip was produced.
+    will_animate = False
     for scene in script["scenes"]:
-        if reusable_clips[scene["scene_id"]] is None:
-            _resolve_visual_path(profile, scene["visual_source"])
+        if reusable_clips[scene["scene_id"]] is not None:
+            continue
+        visual_path = _resolve_visual_path(profile, scene["visual_source"])
+        if scene["scene_id"] in animate_scenes and visual_path.suffix.lower() in PHOTO_EXTENSIONS:
+            will_animate = True
+
+    # Same reasoning one step further out: if any scene still needs I2V, make
+    # sure the provider can actually be reached before the narration pass,
+    # rather than after it (a stopped ComfyUI server is the common case).
+    # The instance is thrown away — constructing one is cheap, model weights
+    # only load on the first animate_image call — so the lazy load below
+    # still decides when the expensive part happens.
+    if will_animate:
+        on_progress(f"檢查 {video_provider} 影片生成服務", 0.0)
+        get_video_provider(video_provider).preflight()
 
     if voice_sample:
         on_progress("產生旁白配音（TTS）", 0.0)
