@@ -57,3 +57,51 @@ class VideoGenerationProvider(ABC):
         "貓輕輕搖尾巴、抬頭看鏡頭") — providers that aren't text-conditioned
         (SVD) ignore it; prompt-aware providers (CogVideoX, Wan) use it to
         steer subject motion instead of falling back to a fixed default."""
+
+
+class ImageEditingProvider(ABC):
+    """Generative editing of a still image, ahead of the video stages.
+
+    Today that means one operation: growing a photo out to the delivery
+    frame's aspect ratio with generated surroundings, instead of filling the
+    leftover space with blur or black (pipeline/editing.py's SCENE_FIT_MODE).
+    The photo's own pixels are carried through untouched — the pet is never
+    regenerated — so this stays compatible with the identity-consistency
+    requirement that rules out redrawing the subject.
+
+    Output is an ordinary image file. The result goes on to the same Ken
+    Burns / Image-to-Video path any other photo takes, so this interface
+    needs to produce *an image*, not a finished shot.
+    """
+
+    def preflight(self) -> None:
+        """Raise if this provider clearly cannot run right now.
+
+        Same contract as VideoGenerationProvider.preflight above: a cheap
+        early check so callers fail before the expensive work leading up to
+        the first call, with a no-op default for providers that can't
+        usefully tell in advance.
+        """
+
+    @abstractmethod
+    def outpaint_to_frame(
+        self,
+        image_path: str,
+        *,
+        target_width: int,
+        target_height: int,
+        prompt: str | None = None,
+        output_path: str,
+    ) -> str:
+        """Extend image_path to target_width x target_height by generating
+        the margin around it, and write the result to output_path (returned).
+
+        The source picture must appear whole and unaltered inside the result
+        — this fills space, it does not reframe or repaint. prompt describes
+        the surroundings to generate ("溫暖的客廳，午後陽光"); providers
+        substitute their own default when it is None.
+
+        A source already at the target aspect ratio has no margin to fill;
+        implementations return it unchanged rather than spending a
+        generation pass to produce a copy.
+        """

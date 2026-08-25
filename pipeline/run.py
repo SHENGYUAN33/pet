@@ -36,6 +36,9 @@ def generate_video(
     animate_scenes: set[int] | None = None,
     video_provider: str = "svd",
     animate_prompt: str | None = None,
+    outpaint_scenes: set[int] | None = None,
+    image_provider: str = "comfy",
+    outpaint_prompt: str | None = None,
     recap_unused_assets: bool = False,
     on_progress: ProgressCallback = noop,
 ) -> tuple[str, int]:
@@ -44,6 +47,9 @@ def generate_video(
     before a TTS voice reference is available. music_track=None skips
     background music (narration/silence only). Returns (output_path, job_id)
     — job_id can later be passed to pipeline.regen.regenerate_scene().
+    outpaint_scenes lists the photo scenes whose empty frame margin should
+    be filled with generated surroundings instead of blurred bars (see
+    pipeline/outpaint.py), described by outpaint_prompt.
     recap_unused_assets appends a closing quick-cut of the assets the
     script had no room for (see pipeline/montage.py) — a 30-second video is
     5-7 shots, so a pet with thirteen photos otherwise leaves six of them
@@ -75,6 +81,9 @@ def generate_video(
         animate_scenes=animate_scenes,
         video_provider=video_provider,
         animate_prompt=animate_prompt,
+        outpaint_scenes=outpaint_scenes,
+        image_provider=image_provider,
+        outpaint_prompt=outpaint_prompt,
     )
     try:
         final_path = _run_generation(
@@ -87,6 +96,9 @@ def generate_video(
             animate_scenes=animate_scenes,
             video_provider=video_provider,
             animate_prompt=animate_prompt,
+            outpaint_scenes=outpaint_scenes,
+            image_provider=image_provider,
+            outpaint_prompt=outpaint_prompt,
             recap_unused_assets=recap_unused_assets,
             on_progress=on_progress,
         )
@@ -108,6 +120,9 @@ def _run_generation(
     animate_scenes: set[int] | None,
     video_provider: str,
     animate_prompt: str | None,
+    outpaint_scenes: set[int] | None,
+    image_provider: str,
+    outpaint_prompt: str | None,
     recap_unused_assets: bool,
     on_progress: ProgressCallback,
 ) -> str:
@@ -181,6 +196,9 @@ def _run_generation(
         animate_scenes=animate_scenes,
         video_provider=video_provider,
         animate_prompt=animate_prompt,
+        outpaint_scenes=outpaint_scenes,
+        image_provider=image_provider,
+        outpaint_prompt=outpaint_prompt,
         on_progress=scaled(on_progress, 0.35, 0.98),
         scene_tracker=DatabaseSceneTracker(job_id),
     )
@@ -239,6 +257,9 @@ def resume_generation_job(
             animate_scenes=set(job["animate_scenes"]) if job["animate_scenes"] else None,
             video_provider=job["video_provider"] or "svd",
             animate_prompt=job["animate_prompt"],
+            outpaint_scenes=set(job["outpaint_scenes"]) if job["outpaint_scenes"] else None,
+            image_provider=job["image_provider"] or "comfy",
+            outpaint_prompt=job["outpaint_prompt"],
             on_progress=scaled(on_progress, 0.05, 0.98),
             scene_tracker=DatabaseSceneTracker(job_id, resume=True),
         )
@@ -283,6 +304,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Which open-source I2V model to use with --animate-scenes (default: svd)",
     )
     parser.add_argument(
+        "--outpaint-scenes",
+        default=None,
+        help="Comma-separated scene ids whose photo should be extended to the "
+        "full 9:16 frame with AI-generated surroundings instead of blurred bars "
+        "(only applies to photo-sourced scenes), e.g. 1,3",
+    )
+    parser.add_argument(
+        "--outpaint-prompt",
+        default=None,
+        help="What the generated surroundings should be, in ENGLISH and describing "
+        "the whole picture (SDXL's text encoder does not understand Chinese), e.g. "
+        "'a grey cat resting in a cosy living room, warm afternoon light, realistic photograph'. Applies to every scene in --outpaint-scenes.",
+    )
+    parser.add_argument(
+        "--image-provider",
+        default="comfy",
+        choices=["comfy"],
+        help="Which image provider fills the margin for --outpaint-scenes (default: comfy)",
+    )
+    parser.add_argument(
         "--recap-unused-assets",
         action="store_true",
         help="Append a closing quick-cut of the assets the script had no room for, "
@@ -297,12 +338,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def parse_scene_ids(raw: str | None) -> set[int] | None:
+    """Read a --animate-scenes / --outpaint-scenes value ("2,4") into the
+    set render_script expects, or None when the flag was not given."""
+    return {int(part) for part in raw.split(",")} if raw else None
+
+
 def main() -> None:
     args = build_parser().parse_args()
 
-    animate_scenes = (
-        {int(s) for s in args.animate_scenes.split(",")} if args.animate_scenes else None
-    )
+    animate_scenes = parse_scene_ids(args.animate_scenes)
+    outpaint_scenes = parse_scene_ids(args.outpaint_scenes)
 
     output_path, job_id = generate_video(
         pet_id=args.pet_id,
@@ -313,6 +359,9 @@ def main() -> None:
         animate_scenes=animate_scenes,
         video_provider=args.video_provider,
         animate_prompt=args.animate_prompt,
+        outpaint_scenes=outpaint_scenes,
+        image_provider=args.image_provider,
+        outpaint_prompt=args.outpaint_prompt,
         recap_unused_assets=args.recap_unused_assets,
     )
     print(f"Job id: {job_id}")

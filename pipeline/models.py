@@ -97,6 +97,13 @@ class GenerationJob(Base):
     animate_scenes: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     video_provider: Mapped[str | None] = mapped_column(String, nullable=True)
     animate_prompt: Mapped[str | None] = mapped_column(String, nullable=True)
+    # The same reasoning for the generated-background pass
+    # (pipeline/outpaint.py): a resumed run without these would finish the
+    # video with blurred bars on the scenes it had not reached yet, next to
+    # generated surroundings on the ones it had.
+    outpaint_scenes: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    image_provider: Mapped[str | None] = mapped_column(String, nullable=True)
+    outpaint_prompt: Mapped[str | None] = mapped_column(String, nullable=True)
     disclosure_missing: Mapped[dict] = mapped_column(JSONB)
     structure_issues: Mapped[dict] = mapped_column(JSONB)
     script_json: Mapped[dict] = mapped_column(JSONB)
@@ -137,7 +144,11 @@ class SceneJob(Base):
     One row per (job_id, scene_id); a retry updates the row and bumps
     attempt rather than inserting a second one. video_provider and
     animate_prompt are NULL for the scenes that were not animated — most of
-    them, since real footage and Ken Burns are the default (strategy A).
+    them, since real footage and Ken Burns are the default (strategy A) —
+    and image_provider/outpaint_prompt likewise for the scenes whose
+    background was not generated. A shot carrying any generated content has
+    to stay identifiable afterwards: it answers "was this real?" and it is
+    what the AI-generation disclosure has to be driven from.
 
     Seed is not recorded yet: no VideoGenerationProvider reports the seed it
     used back to the caller, so there is nothing truthful to store. It
@@ -156,6 +167,8 @@ class SceneJob(Base):
     visual_source: Mapped[str | None] = mapped_column(String, nullable=True)
     video_provider: Mapped[str | None] = mapped_column(String, nullable=True)
     animate_prompt: Mapped[str | None] = mapped_column(String, nullable=True)
+    image_provider: Mapped[str | None] = mapped_column(String, nullable=True)
+    outpaint_prompt: Mapped[str | None] = mapped_column(String, nullable=True)
     clip_path: Mapped[str | None] = mapped_column(String, nullable=True)
     error: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

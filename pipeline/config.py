@@ -163,3 +163,71 @@ WAN_SHIFT = float(os.getenv("WAN_SHIFT", "5.0"))
 # Fixed by default so re-running a scene reproduces it; change it to draw a
 # different take of the same photo when a result comes out ugly.
 WAN_SEED = int(os.getenv("WAN_SEED", "47"))
+
+# --- 背景延伸 / Outpainting (docs/architecture.md §5 strategy C) ---------------
+# A photo that isn't already 9:16 leaves empty space in the output frame, and
+# SCENE_FIT_MODE decides what fills it: a blurred copy of the photo, flat
+# black, or a crop that throws away most of a landscape shot. None of those
+# add anything — the result reads as "a photo with bars", which is the main
+# reason the finished video looks like a slideshow rather than a scene.
+#
+# Outpainting fills that space with generated surroundings instead: the pet's
+# own pixels are never touched (only the empty margin is generated), so this
+# carries none of the identity risk of regenerating the subject, and it needs
+# no matting step. That is why it comes before background *replacement* in
+# the roadmap, not after.
+#
+# Runs on the same locally-hosted ComfyUI server as Wan2.2 (see WAN_* above),
+# using core nodes only (ImagePadForOutpaint + VAEEncodeForInpaint + KSampler)
+# so no extra custom node is needed — just a checkpoint in
+# vendor/comfyui/models/checkpoints/.
+OUTPAINT_COMFYUI_URL = os.getenv("OUTPAINT_COMFYUI_URL", WAN_COMFYUI_URL)
+OUTPAINT_MODEL_FILE = os.getenv("OUTPAINT_MODEL_FILE", "sd_xl_base_1.0.safetensors")
+# Generation frame: exactly 9:16 so the result drops into the output frame
+# with nothing left to pad, and divisible by 8 for the VAE. Smaller than the
+# 1080x1920 delivery size on purpose — SDXL is trained around 1024x1024, and
+# pipeline/editing.py scales the result up anyway.
+OUTPAINT_WIDTH = int(os.getenv("OUTPAINT_WIDTH", "720"))
+OUTPAINT_HEIGHT = int(os.getenv("OUTPAINT_HEIGHT", "1280"))
+OUTPAINT_STEPS = int(os.getenv("OUTPAINT_STEPS", "25"))
+OUTPAINT_CFG = float(os.getenv("OUTPAINT_CFG", "7.0"))
+OUTPAINT_SAMPLER = os.getenv("OUTPAINT_SAMPLER", "euler")
+OUTPAINT_SCHEDULER = os.getenv("OUTPAINT_SCHEDULER", "karras")
+# Fixed by default so re-running a scene reproduces the same surroundings;
+# change it to draw a different take of the same photo.
+OUTPAINT_SEED = int(os.getenv("OUTPAINT_SEED", "47"))
+# How far the generated margin blends into the photo. Feathering softens the
+# seam; grow_mask_by lets the sampler repaint a little of the photo's own
+# edge so the two don't meet on a hard line. Both cost some of the original
+# edge pixels, so they stay small.
+OUTPAINT_FEATHER = int(os.getenv("OUTPAINT_FEATHER", "40"))
+OUTPAINT_GROW_MASK = int(os.getenv("OUTPAINT_GROW_MASK", "16"))
+# English, and not by preference: SDXL's text encoders are CLIP, trained on
+# English captions only — a Chinese prompt is not translated, it is embedded
+# as noise, and the model falls back to inventing whatever it likes (measured
+# here: a zh-TW "warm living room" prompt produced a night-time cityscape
+# above the cat). Until something translates the reviewer's wording on the
+# way in, every prompt reaching this provider has to be written in English.
+#
+# It should describe the *whole* picture, not just the margin. The masked
+# area is generated from the prompt alone, so a prompt that doesn't mention
+# what is already in the photo produces surroundings that belong to a
+# different scene.
+OUTPAINT_DEFAULT_PROMPT = os.getenv(
+    "OUTPAINT_DEFAULT_PROMPT",
+    "a pet photographed indoors, warm natural home interior, soft afternoon "
+    "light, shallow depth of field, realistic photograph",
+)
+# The generated margin must stay scenery. Left to itself the model reads a
+# photo of a pet as "this picture contains a pet" and paints another one into
+# the empty space — a second cat that does not exist, which is a factual
+# problem, not just an ugly one (CLAUDE.md: Pet Profile 是唯一事實來源). The
+# same goes for people: an invented human implies a home situation nobody
+# promised. Text is excluded because subtitles are burned in by the editing
+# stage, never generated inside the picture.
+OUTPAINT_NEGATIVE_PROMPT = os.getenv(
+    "OUTPAINT_NEGATIVE_PROMPT",
+    "another animal, second pet, extra cat, extra dog, person, human, hands, face, "
+    "text, watermark, signature, logo, frame, border, blurry, distorted, lowres, "
+    "duplicate, cropped",
+)

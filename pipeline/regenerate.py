@@ -45,6 +45,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Which open-source I2V model to use with --animate (default: svd)",
     )
     parser.add_argument(
+        "--outpaint",
+        action="store_true",
+        help="Fill this scene's empty frame margin with AI-generated surroundings "
+        "instead of blurred bars (only applies if the scene's visual_source is a photo)",
+    )
+    parser.add_argument(
+        "--outpaint-prompt",
+        default=None,
+        help="What the generated surroundings should be, in ENGLISH and describing "
+        "the whole picture (SDXL's text encoder does not understand Chinese), e.g. "
+        "'a grey cat resting in a cosy living room, warm afternoon light, realistic photograph'",
+    )
+    parser.add_argument(
+        "--image-provider",
+        default="comfy",
+        choices=["comfy"],
+        help="Which image provider fills the margin for --outpaint (default: comfy)",
+    )
+    parser.add_argument(
         "--animate-prompt",
         default=None,
         help="Motion guidance for the animated scene, e.g. '貓輕輕搖尾巴、抬頭看鏡頭' "
@@ -67,6 +86,9 @@ def main() -> None:
         animate=args.animate,
         video_provider=args.video_provider,
         animate_prompt=args.animate_prompt,
+        outpaint=args.outpaint,
+        image_provider=args.image_provider,
+        outpaint_prompt=args.outpaint_prompt,
     )
     print(f"New job id: {new_job_id} (parent: {args.job_id})")
     print(f"Done: {output_path}")

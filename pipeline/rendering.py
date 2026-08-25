@@ -15,6 +15,7 @@ from pipeline.editing import (
 from pipeline.i2v import animate_photo, get_video_provider
 from pipeline.montage import scene_sources
 from pipeline.narration import silence_scenes, synthesize_scenes
+from pipeline.outpaint import extend_background, get_image_provider
 from pipeline.profile import PetProfile
 from pipeline.progress import ProgressCallback, noop
 from pipeline.scene_tracking import NoopSceneTracker, SceneTracker
@@ -46,10 +47,16 @@ def _resolve_scene_visuals(profile: PetProfile, scene: dict) -> list[Path]:
     return [_resolve_visual_path(profile, source) for source in scene_sources(scene)]
 
 
-def _is_animatable(visual_paths: list[Path]) -> bool:
-    """I2V animates a single still photo. The closing recap shows several
-    assets in one shot and real footage already moves, so neither is a
-    candidate — a scene id naming one is simply not animated."""
+def _is_single_photo(visual_paths: list[Path]) -> bool:
+    """Whether a scene is one still photograph.
+
+    Both generative steps need that. I2V animates a single still, and
+    outpainting extends one — the closing recap shows several assets in one
+    shot, and real footage already moves and already fills the frame, so
+    neither is a candidate for either. A scene id naming one is simply left
+    alone rather than treated as an error: which scenes a video ends up with
+    is the script's decision, not the caller's.
+    """
     return len(visual_paths) == 1 and visual_paths[0].suffix.lower() in PHOTO_EXTENSIONS
 
 
@@ -63,6 +70,9 @@ def render_script(
     animate_scenes: set[int] | None = None,
     video_provider: str = "svd",
     animate_prompt: str | None = None,
+    outpaint_scenes: set[int] | None = None,
+    image_provider: str = "comfy",
+    outpaint_prompt: str | None = None,
     on_progress: ProgressCallback = noop,
     scene_tracker: SceneTracker | None = None,
 ) -> Path:
@@ -84,6 +94,19 @@ def render_script(
     rather than a per-scene mapping, since callers only ever animate one
     scene at a time today (pipeline.regen.regenerate_scene).
 
+    outpaint_scenes (pipeline/outpaint.py): scene_ids whose photo should be
+    grown out to the delivery frame with generated surroundings instead of
+    being shown against blurred bars. Only meaningful for photo-sourced
+    scenes, and applied *before* animation, so a scene listed in both is
+    animated from the extended picture rather than from the original.
+    outpaint_prompt describes those surroundings for every listed scene — in
+    English, and describing the whole picture rather than just the margin
+    (see pipeline/config.py's OUTPAINT_DEFAULT_PROMPT for why);
+    like animate_prompt it is one shared string rather than a per-scene
+    mapping, because nothing above this layer produces per-scene wording
+    yet — that arrives when the script itself starts carrying a setting per
+    shot.
+
     on_progress reports which stage is running (see pipeline/progress.py);
     the CLI leaves it at the no-op default, the web UI uses it to drive a
     progress bar instead of a blank spinner.
@@ -96,6 +119,7 @@ def render_script(
     database dependency."""
     work_dir.mkdir(parents=True, exist_ok=True)
     animate_scenes = animate_scenes or set()
+    outpaint_scenes = outpaint_scenes or set()
     tracker = scene_tracker or NoopSceneTracker()
 
     # Which scenes a resumed run can skip, decided once so the check below and
@@ -109,12 +133,17 @@ def render_script(
     # whose clip is being reused aren't checked — their source may legitimately
     # have been removed since that clip was produced.
     will_animate = False
+    will_outpaint = False
     for scene in script["scenes"]:
         if reusable_clips[scene["scene_id"]] is not None:
             continue
         visual_paths = _resolve_scene_visuals(profile, scene)
-        if scene["scene_id"] in animate_scenes and _is_animatable(visual_paths):
+        if not _is_single_photo(visual_paths):
+            continue
+        if scene["scene_id"] in animate_scenes:
             will_animate = True
+        if scene["scene_id"] in outpaint_scenes:
+            will_outpaint = True
 
     # Same reasoning one step further out: if any scene still needs I2V, make
     # sure the provider can actually be reached before the narration pass,
@@ -125,6 +154,9 @@ def render_script(
     if will_animate:
         on_progress(f"檢查 {video_provider} 影片生成服務", 0.0)
         get_video_provider(video_provider).preflight()
+    if will_outpaint:
+        on_progress(f"檢查 {image_provider} 背景生成服務", 0.0)
+        get_image_provider(image_provider).preflight()
 
     if voice_sample:
         on_progress("產生旁白配音（TTS）", 0.0)
@@ -139,6 +171,7 @@ def render_script(
     # load, and a resumed run whose animated scenes are already done never
     # needs it at all.
     i2v_provider = None
+    outpaint_provider = None
 
     def load_i2v_provider():
         nonlocal i2v_provider
@@ -146,6 +179,12 @@ def render_script(
             on_progress(f"載入 {video_provider} 影片生成模型", 0.15)
             i2v_provider = get_video_provider(video_provider)
         return i2v_provider
+
+    def load_outpaint_provider():
+        nonlocal outpaint_provider
+        if outpaint_provider is None:
+            outpaint_provider = get_image_provider(image_provider)
+        return outpaint_provider
 
     video_clip_paths = []
     ordered_audio_paths = []
@@ -165,18 +204,27 @@ def render_script(
             continue
 
         visual_paths = _resolve_scene_visuals(profile, scene)
-        animated = scene_id in animate_scenes and _is_animatable(visual_paths)
-        on_progress(
-            f"鏡頭 {index + 1}/{scene_count}"
-            + (f"：{video_provider} 動態化中（比較久）" if animated else "：剪輯與字幕"),
-            scene_fraction,
-        )
+        single_photo = _is_single_photo(visual_paths)
+        animated = scene_id in animate_scenes and single_photo
+        outpainted = scene_id in outpaint_scenes and single_photo
+        # Named after the step that runs *first*, since a scene doing both
+        # spends its opening minutes on the background; the animation step
+        # re-reports itself when it takes over.
+        if outpainted:
+            step = f"：{image_provider} 生成背景中"
+        elif animated:
+            step = f"：{video_provider} 動態化中（比較久）"
+        else:
+            step = "：剪輯與字幕"
+        on_progress(f"鏡頭 {index + 1}/{scene_count}{step}", scene_fraction)
 
         tracker.start_scene(
             scene_id,
             visual_source=", ".join(scene_sources(scene)),
             video_provider=video_provider if animated else None,
             animate_prompt=animate_prompt if animated else None,
+            image_provider=image_provider if outpainted else None,
+            outpaint_prompt=outpaint_prompt if outpainted else None,
         )
         clip_path = work_dir / f"scene_{scene_id}.mp4"
         try:
@@ -190,6 +238,30 @@ def render_script(
                 )
             else:
                 visual_path = visual_paths[0]
+                if outpainted:
+                    # Cached under work_dir rather than regenerated: a resumed
+                    # run that died during this scene's animation should not
+                    # pay for the background a second time, and reusing the
+                    # exact file also keeps the retry visually identical to
+                    # the attempt it continues.
+                    bg_path = work_dir / f"scene_{scene_id}_bg.png"
+                    if bg_path.exists():
+                        visual_path = bg_path
+                    else:
+                        visual_path = Path(
+                            extend_background(
+                                str(visual_path),
+                                load_outpaint_provider(),
+                                output_path=str(bg_path),
+                                prompt=outpaint_prompt,
+                            )
+                        )
+                    if animated:
+                        on_progress(
+                            f"鏡頭 {index + 1}/{scene_count}：{video_provider} 動態化中（比較久）",
+                            scene_fraction,
+                        )
+
                 if animated:
                     i2v_path = work_dir / f"scene_{scene_id}_i2v.mp4"
                     animate_photo(

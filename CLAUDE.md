@@ -61,7 +61,7 @@
 
 素材組成建議比例（避免一開始做「完全生成式影片」）：60% 真實影片剪輯 / 20% 照片動態化 / 10% 字幕與貼圖 / 10% AI 生成場景。
 
-目前所在階段：**MVP 開發中（第三個切片：Image-to-Video〔SVD／CogVideoX／Wan2.2〕＋ 簡易 FastAPI/前端完成）**。
+目前所在階段：**MVP 開發中（第四個切片：AI 背景延伸〔outpaint〕的第一步完成，CLI only）**。
 
 - 第一個切片（多寵物管理／PostgreSQL 資料層）：`pipeline/db.py`／`pipeline/models.py`／`pipeline/pet_repo.py`，管理 CLI `pipeline/manage.py`（`init-db`／`import-profile`／`list-pets`／`show-pet`）
 - 第二個切片（分鏡編輯／單鏡頭重生）：渲染邏輯抽到 `pipeline/rendering.py`（`render_script`，`generate_video` 與 `regenerate_scene` 共用，不重複寫一次），每次生成都在 `storage/output/<pet_id>/gen_<8碼token>/` 有自己的子資料夾（不再共用同一層、不會互相覆蓋鏡頭檔案）。`pipeline/regen.py` 提供 `apply_scene_overrides`（純函式）＋ `regenerate_scene`（patch 單一鏡頭素材/字幕/旁白後只重新渲染，不重跑 LLM），CLI 是 `pipeline/regenerate.py`。`GenerationJob` 現在存完整 `script_json`，`parent_job_id` 把重新生成的版本連回原始 job——**每次重生都是新的一筆紀錄，不覆蓋舊的**，原始輸出檔案與紀錄都保留供追溯。
@@ -72,6 +72,18 @@
     - `providers/video/wan_provider.py`（**Wan2.2 TI2V-5B，Apache 2.0**）——文字 prompt 真的能指揮「主體」動作，是目前品質/速度最平衡的選擇。走**本機自架的 ComfyUI 伺服器**（`vendor/comfyui/`，自己的 venv，`vendor/` 已 gitignore），不是 diffusers、也不是 Wan 官方 `generate.py`：兩條路都試過並排除（diffusers 的 I2V-A14B 約 118GB 裝不下、TI2V-5B 在 diffusers 沒有 I2V 支援、官方 generate.py 只有 bf16 未量化版約 500s/step）；ComfyUI ＋ FP8 量化檢查點實測約 25s/step，一顆鏡頭（5 秒、20 步）約 **8 分鐘**、VRAM 約 11GB。完整理由寫在 `pipeline/config.py` 的 `WAN_*` 註解區與 `wan_provider.py` docstring。**這個 provider 不會自己啟動 ComfyUI**（跟 rendering 不會自己啟 Ollama/PostgreSQL 一樣），啟動指令見 [STARTUP.md](STARTUP.md)。
     `pipeline/rendering.py render_script()` 有 `animate_scenes`／`video_provider`／`animate_prompt` 參數：指定的照片鏡頭會先呼叫 I2V provider 產生暫存影片，再交給既有的 `build_scene_clip`（真實影片那條路徑：loop/裁切/固定 fps）處理，沒有另外寫一套邏輯。CLI 是 `pipeline/run.py --animate-scenes 2,4 --video-provider wan --animate-prompt "貓輕輕搖尾巴、抬頭看鏡頭"`、`pipeline/regenerate.py --animate --video-provider wan --animate-prompt ...`；網頁端對應 `GenerateRequest`／`RegenerateSceneRequest` 的 `animate_scenes`/`animate`、`video_provider`、`animate_prompt` 欄位。
   - **簡易 FastAPI/前端**：`webapp/main.py`（FastAPI，直接呼叫既有的 `pipeline.pet_repo`／`pipeline.run`／`pipeline.regen`，不重寫業務邏輯）＋ `webapp/static/index.html`（純 HTML/JS，無建置流程，不是架構文件最終目標的 React/Next.js）。**生成/重生改成背景執行**：`POST .../generate`、`POST .../regenerate-scene` 立刻回 202＋`task_id`，實際工作跑在 `webapp/tasks.py` 的背景執行緒，前端輪詢 `GET /api/tasks/{task_id}` 顯示進度條與目前步驟（腳本 1/3 → TTS → 鏡頭 n/m → 合併），可以關掉進度視窗繼續操作，重新整理頁面會用 `GET /api/tasks` 重新接上還在跑的工作。進度來源是 `pipeline/progress.py` 的 `on_progress` callback（CLI 不傳就是 no-op，行為不變）。**一次只跑一個**（生成會吃滿 GPU/CPU），第二個請求回 409。task 的**即時**狀態（進度百分比、目前步驟）刻意只存在 process 記憶體——重啟會連執行緒一起殺掉，存下「跑到 60%」並不代表任何還在進行的事。真正跨重啟的狀態在資料庫：`GenerationJob`／`SceneJob`（見上方 Job 狀態機段落），且 webapp 啟動時會跑 `reap_interrupted_jobs()`，把上一個 process 死掉時留在 `running` 的 job 收成 `failed`（否則 UI 會永遠顯示「生成中」），它們就會以「可續跑」的形式出現。唯一會判斷錯的情況是「CLI 正在跑的時候 webapp 剛好啟動」，但那是自癒的——CLI 仍持有那一列，跑完時 `finish_generation_job()` 會把狀態與錯誤清掉。網頁現在也能**從 `storage/profiles/` 底下的檔案路徑匯入 Profile**（`POST /api/pets/import-path`，路徑限制在 `storage/profiles/` 內＋ `PetProfile` pydantic 驗證，防止任意檔案讀取）和**直接編輯/新增 Pet Profile 的 JSON**（`PUT /api/pets/{pet_id}/profile`，同樣走 pydantic 驗證，upsert 語意跟 `pipeline.manage import-profile` 一致），對應測試在 `tests/test_webapp.py`。前端已做過一次介面改版（設計 token／深色模式、寵物清單搜尋、生成歷程版本卡片含 QA 警告、右側改成「產生新影片／單鏡頭重生」兩個分頁、選填欄位收進摺疊區、同步生成期間有計時的等待遮罩）；**單鏡頭重生改成用點選的**——先選版本再從鏡頭清單點一個鏡頭，不用自己記 job id/scene id，資料來源是新的 `GET /api/jobs/{job_id}`（回傳含 `script_json` 的完整 job 紀錄）。
+  - **AI 背景延伸（outpaint，第四個切片的第一步）**：這是「讓影片有場景感、不只是照片配模糊邊」那條路上最便宜的一步——**只生成畫面的空白邊，寵物本身的像素一個都不動**，所以沒有把主角重畫掉的識別風險，也不需要去背。非 9:16 的照片原本靠 `SCENE_FIT_MODE=blur`（模糊自己填邊），現在可以改成用 SDXL 把周圍環境長出來。
+    - `providers/base.py` 新增 `ImageEditingProvider`（跟 `VideoGenerationProvider` 同構：`preflight()` ＋ 一個主方法），實作是 `providers/image/comfy_outpaint_provider.py`，透過 `pipeline/outpaint.py` 的 `get_image_provider()` 取用（目前只有 `comfy`）。
+    - 走**跟 Wan2.2 同一台 ComfyUI 伺服器**，但只用**核心節點**（`ImagePadForOutpaint` → `VAEEncodeForInpaint` → `KSampler`），不需要額外的 custom node，只需要一個 SDXL checkpoint 放在 `vendor/comfyui/models/checkpoints/`（`config.OUTPAINT_MODEL_FILE`，預設 `sd_xl_base_1.0.safetensors`）。沒放的話 `preflight()` 會在開跑前就講清楚檔案該放哪，不會等 ComfyUI 自己的驗證錯誤。
+    - 兩個 ComfyUI provider 共用的 HTTP 傳輸抽到 `providers/comfy_client.py`（`ComfyUIClient`：`ping`／`upload_image`／`run`／`fetch_output`／`node_options`），`wan_provider.py` 已改用它，各 provider 只負責描述自己的 graph。**graph 一律按節點參數名稱組，不要照 UI workflow 的 `widgets_values` 位置抄**（理由見 `wan_provider.py` docstring）。
+    - `render_script()` 新增 `outpaint_scenes`／`image_provider`／`outpaint_prompt`，跟 `animate_scenes` 同一個模式。順序是**先補背景再動態化**：兩個都指定的鏡頭會拿補完背景的圖去跑 I2V。補出來的圖存成 `work_dir/scene_<id>_bg.png` 並**快取重用**（續跑不會重付一次取樣）。真實影片與 recap 鏡頭不適用（判斷條件跟 I2V 共用的 `_is_single_photo`），列到清單裡只是被忽略，不算錯。
+    - `GenerationJob`／`SceneJob` 加了 `outpaint_scenes`／`image_provider`／`outpaint_prompt` 欄位（migration `2f878966c440`），理由跟 `animate_*` 一樣：續跑要重現同一支影片，不能讓沒跑到的鏡頭留著模糊邊；生成紀錄也要看得出哪一顆鏡頭含 AI 生成內容。
+    - negative prompt（`config.OUTPAINT_NEGATIVE_PROMPT`）刻意擋掉「多生一隻動物／多生一個人」——那是對這隻寵物的**事實陳述**，不只是畫面難看（Pet Profile 是唯一事實來源）。
+    - **prompt 必須用英文，而且要描述「整張畫面」**（不只是要生成的那條邊）：SDXL 的文字編碼器是 CLIP、只認英文，中文 prompt 等同雜訊——實測中文的「溫暖的客廳」生出了夜景城市天際線。這條限制寫在 `config.OUTPAINT_DEFAULT_PROMPT` 的註解裡。之後要讓非工程使用者能用中文描述，會需要在 provider 前面加一層翻譯（Ollama 已經在了），或等腳本層直接產生英文的 art direction。
+    - 生成完之後會用 `InvertMask` ＋ `ImageCompositeMasked` **把原始照片的像素貼回去**：VAEDecode 出來的是整張重建的畫面（照片也被 VAE round-trip 過，會變糊、偏色），不貼回去的話「寵物像素完全不動」就只是嘴上說說。
+    - CLI：`python -m pipeline.run --outpaint-scenes 1,3 --outpaint-prompt "a grey cat resting in a cosy living room, warm afternoon light, realistic photograph"`、`python -m pipeline.regenerate <job_id> <scene_id> --outpaint --outpaint-prompt ...`。**網頁端還沒接**，這一步刻意只做 CLI。
+    - 實測（RTX 5070 Ti 16GB）：一張 720x1280、25 步，約 **8 秒**（模型已載入），比 Wan2.2 的 8 分鐘便宜兩個數量級。
+    - 還沒做的（規劃時討論過的後續切片）：去背＋背景**置換**（BiRefNet/SAM2 取 matte、inpaint 生成新場景）、腳本 schema 的 `story_arc`／`art_direction`／per-scene `background`（讓多個鏡頭的背景構成一條故事線而不是各自為政）、AI 生成揭露標籤的畫面疊加、fact-check 納入背景 prompt、QA 對生成背景鏡頭的標記。
   - **給非工程使用者的表單化 UI**：Pet Profile 不再只有 JSON textarea——`webapp/static/index.html` 現在是中文欄位表單（基本資料／健康狀態勾選／個性標籤 chip 編輯器／故事與領養條件／照片影片清單含縮圖／外觀特徵摺疊區），JSON 直編退居「進階」摺疊區（可「套用到上方表單」，但仍要按表單的儲存鈕才寫入 DB）。表單會保留 schema 中沒有對應 widget 的欄位再合併回去，不會靜默丟資料。**檔案路徑欄位改成用選的**：瀏覽器拿不到本機檔案的真實路徑，所以「從電腦選擇」＝開 OS 檔案對話框→上傳到 `storage/assets/<pet_id>/`→用存下來那份的相對路徑；新增 `POST /api/pets/{pet_id}/assets`（副檔名 allowlist、檔名淨化、同名不覆蓋、pet_id 先做字元檢查＋ `storage/assets/` 包含性檢查再查 DB）、`GET /api/pets/{pet_id}/assets`（列出已上傳檔案給下拉選單）、`GET /api/profile-files`（匯入表單改成下拉選單），照片縮圖走唯讀的 `/media` static mount。單鏡頭重生的「換素材」也從手打 asset_id 改成從該寵物素材下拉選。上傳需要先有 pet_id（新寵物要先存檔才能傳照片）。
 
 `GenerationJob` 現在是**開跑就建檔**：`start_generation_job()` 在慢工作開始前先寫一筆 `status=running`，結束時 `finish_generation_job()`（`done`＋ output_path/script_json）或 `fail_generation_job()`（`failed`＋錯誤原因）收尾，所以跑到一半崩潰／重啟不再是「完全沒紀錄」。狀態值是 `pipeline/models.py` 的 `JobStatus`（`running`／`done`／`failed`）。
@@ -95,6 +107,7 @@ alembic upgrade head                              # 套用
 - LLM：Ollama + Qwen2.5-7B-Instruct（`pipeline/config.py` 可透過 `.env` 覆寫模型/host）
 - TTS：Coqui XTTS-v2（zero-shot voice cloning，需一段參考語音 wav）
 - 影片生成 I2V：**已接**（SVD／CogVideoX／Wan2.2，見上），只在明確指定 `animate_scenes`／`--animate` 時才用，預設仍是真實素材剪輯＋照片 Ken Burns（策略 A 優先，I2V 只補位）
+- 圖像生成（背景延伸）：**已接**（ComfyUI ＋ SDXL，見上），同樣只在明確指定 `outpaint_scenes`／`--outpaint` 時才用；生成的只有畫面空白邊，不是寵物本身
 - VLM／音樂生成：仍刻意省略，素材品質檢查靠人工選片
 - 任務編排：仍是同步流程，Celery/Temporal 留到規模需要時才導入；資料庫用 PostgreSQL（見上）
 - Provider Adapter：LLM/TTS/I2V 都已有具體實作（`providers/llm/`、`providers/tts/`、`providers/video/`），但都還是「呼叫端寫死選哪個 provider」，還沒有 Router／依內容敏感度或成本自動切換，留到後續 MVP 切片
@@ -132,7 +145,7 @@ alembic upgrade head                              # 套用
 - **每個新功能／bug fix 都要有對應測試**（`tests/`，用 `pytest`），不接受無測試覆蓋的 pipeline 邏輯變更
 - **合併前必須通過 `ruff check` 與 `ruff format --check`**（`.claude/hooks/post-edit.sh` 會在每次 Edit/Write 後自動跑 `ruff check --fix` + `ruff format`，但送出前仍需確認乾淨）
 - **型別標註**：`pipeline/` 與 `providers/` 下的公開函式/方法一律加 type hints，資料結構優先用 `pydantic` model（對應 Pet Profile / Script schema），不用裸 `dict`
-- **不寫死 magic number／字串**：QA 加權評分門檻（80分）、5-7 鏡頭數量（`config.MIN_SCENES`／`MAX_SCENES`）、3-6 秒單鏡頭長度（`config.MIN_SCENE_DURATION`／`MAX_SCENE_DURATION`）、字幕字型（`config.DRAWTEXT_FONT_FILE`）、各 I2V provider 的模型檔名/步數/解析度（`config.SVD_*`／`COGVIDEOX_*`／`WAN_*`）等關鍵參數一律集中在 `pipeline/config.py`（可用 `.env` 覆寫），不散落在各處程式碼
+- **不寫死 magic number／字串**：QA 加權評分門檻（80分）、5-7 鏡頭數量（`config.MIN_SCENES`／`MAX_SCENES`）、3-6 秒單鏡頭長度（`config.MIN_SCENE_DURATION`／`MAX_SCENE_DURATION`）、字幕字型（`config.DRAWTEXT_FONT_FILE`）、各 I2V provider 的模型檔名/步數/解析度（`config.SVD_*`／`COGVIDEOX_*`／`WAN_*`）、背景延伸的模型/取樣/接縫參數（`config.OUTPAINT_*`）等關鍵參數一律集中在 `pipeline/config.py`（可用 `.env` 覆寫），不散落在各處程式碼
 - **Provider Adapter 介面變更需保持向下相容**：輸入輸出 schema 不可隨意破壞既有呼叫端，新增能力優先用新方法/新欄位而非改變既有介面語意
 - **錯誤處理只在系統邊界做**：外部 API 呼叫、檔案 I/O、使用者輸入解析需要 try/except 並記錄可追溯的錯誤上下文；內部函式之間的呼叫信任呼叫端已驗證過的資料，不重複防禦
 
@@ -188,6 +201,12 @@ python -m pipeline.regenerate <job_id> <scene_id> --animate --video-provider svd
 # 先照 STARTUP.md 啟動 vendor/comfyui（它有自己的 .venv），再：
 python -m pipeline.run --pet-id <pet_id> --animate-scenes 2,4 --video-provider wan --animate-prompt "貓輕輕搖尾巴、抬頭看鏡頭"
 python -m pipeline.regenerate <job_id> <scene_id> --animate --video-provider wan --animate-prompt "狗狗歪頭看鏡頭"
+
+# AI 背景延伸（outpaint）：把照片鏡頭的空白邊換成生成的環境，不動寵物本身
+# 需要同一台 ComfyUI ＋ 一個 SDXL checkpoint 放在 vendor/comfyui/models/checkpoints/
+# prompt 必須是英文、且描述整張畫面（SDXL 的 CLIP 不懂中文，見 config.OUTPAINT_DEFAULT_PROMPT）
+python -m pipeline.run --pet-id <pet_id> --outpaint-scenes 1,3 --outpaint-prompt "a grey cat resting in a cosy living room, warm afternoon light, realistic photograph"
+python -m pipeline.regenerate <job_id> <scene_id> --outpaint --outpaint-prompt "a grey cat on green grass in a sunny park, realistic photograph"
 
 # 簡易 FastAPI + 前端（無建置流程的純 HTML/JS，不是最終目標的 React/Next.js）
 pip install -e ".[web]"

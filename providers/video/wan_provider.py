@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import shutil
-import time
 from pathlib import Path
-
-import requests
 
 from pipeline import config
 from providers.base import VideoGenerationProvider
+from providers.comfy_client import ComfyUIClient
 
 
 def _with_camera_constraint(prompt: str) -> str:
@@ -61,7 +58,7 @@ class WanProvider(VideoGenerationProvider):
     """
 
     def __init__(self, base_url: str | None = None):
-        self.base_url = base_url or config.WAN_COMFYUI_URL
+        self.client = ComfyUIClient(base_url or config.WAN_COMFYUI_URL)
 
     def _build_prompt(
         self, image_filename: str, prompt: str, num_frames: int, output_prefix: str
@@ -195,42 +192,11 @@ class WanProvider(VideoGenerationProvider):
             },
         }
 
-    def _upload_image(self, image_path: str) -> str:
-        with open(image_path, "rb") as f:
-            resp = requests.post(
-                f"{self.base_url}/upload/image",
-                files={"image": (Path(image_path).name, f)},
-                timeout=60,
-            )
-        resp.raise_for_status()
-        return resp.json()["name"]
-
-    def _wait_for_result(self, prompt_id: str, poll_interval: float = 2.0) -> dict:
-        while True:
-            resp = requests.get(f"{self.base_url}/history/{prompt_id}", timeout=30)
-            resp.raise_for_status()
-            history = resp.json()
-            if prompt_id in history:
-                entry = history[prompt_id]
-                status = entry.get("status", {})
-                if status.get("completed") is True:
-                    return entry
-                if status.get("status_str") == "error":
-                    raise RuntimeError(f"ComfyUI job {prompt_id} failed: {status}")
-            time.sleep(poll_interval)
-
     def preflight(self) -> None:
         """This provider never starts ComfyUI itself (same as rendering not
         starting Ollama or PostgreSQL — see STARTUP.md), so a stopped server
         is the most common way a run fails."""
-        try:
-            requests.get(f"{self.base_url}/system_stats", timeout=5)
-        except requests.exceptions.ConnectionError as e:
-            raise RuntimeError(
-                f"ComfyUI server not reachable at {self.base_url} — start it first: "
-                f"cd {config.WAN_COMFYUI_DIR} && .venv/Scripts/activate && "
-                f"python main.py --listen 127.0.0.1 --port 8188"
-            ) from e
+        self.client.ping()
 
     def animate_image(
         self,
@@ -245,7 +211,7 @@ class WanProvider(VideoGenerationProvider):
         # makes that a real window.
         self.preflight()
 
-        image_filename = self._upload_image(image_path)
+        image_filename = self.client.upload_image(image_path)
 
         # frame_num must be 4n+1 per Wan2.2's own constraint (see vendor/wan2.2's
         # generate.py --frame_num help text — the ComfyUI node inherits the
@@ -261,17 +227,5 @@ class WanProvider(VideoGenerationProvider):
             output_prefix,
         )
 
-        resp = requests.post(
-            f"{self.base_url}/prompt",
-            json={"prompt": api_prompt, "client_id": "pet-adoption-video"},
-            timeout=30,
-        )
-        if resp.status_code != 200:
-            raise RuntimeError(f"ComfyUI rejected the workflow: {resp.text}")
-        prompt_id = resp.json()["prompt_id"]
-
-        entry = self._wait_for_result(prompt_id)
-        video_meta = entry["outputs"]["92"]["gifs"][0]
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(video_meta["fullpath"], output_path)
-        return output_path
+        entry = self.client.run(api_prompt)
+        return self.client.fetch_output(entry["outputs"]["92"]["gifs"][0], output_path)

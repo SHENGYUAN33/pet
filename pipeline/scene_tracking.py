@@ -33,6 +33,8 @@ class SceneTracker(Protocol):
         visual_source: str | None,
         video_provider: str | None,
         animate_prompt: str | None,
+        image_provider: str | None,
+        outpaint_prompt: str | None,
     ) -> None: ...
 
     def finish_scene(self, scene_id: int, clip_path: str) -> None: ...
@@ -54,6 +56,8 @@ class NoopSceneTracker:
         visual_source: str | None,
         video_provider: str | None,
         animate_prompt: str | None,
+        image_provider: str | None,
+        outpaint_prompt: str | None,
     ) -> None: ...
 
     def finish_scene(self, scene_id: int, clip_path: str) -> None: ...
@@ -89,6 +93,8 @@ class DatabaseSceneTracker:
         visual_source: str | None,
         video_provider: str | None,
         animate_prompt: str | None,
+        image_provider: str | None,
+        outpaint_prompt: str | None,
     ) -> None:
         pet_repo.start_scene_job(
             self.job_id,
@@ -96,6 +102,8 @@ class DatabaseSceneTracker:
             visual_source=visual_source,
             video_provider=video_provider,
             animate_prompt=animate_prompt,
+            image_provider=image_provider,
+            outpaint_prompt=outpaint_prompt,
         )
 
     def finish_scene(self, scene_id: int, clip_path: str) -> None:

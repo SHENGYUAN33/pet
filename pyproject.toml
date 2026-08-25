@@ -60,6 +60,7 @@ build-backend = "setuptools.build_meta"
 packages = [
     "pipeline",
     "providers",
+    "providers.image",
     "providers.llm",
     "providers.tts",
     "providers.video",
