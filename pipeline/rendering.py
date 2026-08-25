@@ -6,12 +6,14 @@ from pipeline import config
 from pipeline.audio_mix import mix_narration_with_music
 from pipeline.editing import (
     PHOTO_EXTENSIONS,
+    build_recap_clip,
     build_scene_clip,
     concat_audio,
     concat_video_only,
     mux_video_audio,
 )
 from pipeline.i2v import animate_photo, get_video_provider
+from pipeline.montage import scene_sources
 from pipeline.narration import silence_scenes, synthesize_scenes
 from pipeline.profile import PetProfile
 from pipeline.progress import ProgressCallback, noop
@@ -36,6 +38,19 @@ def _resolve_visual_path(profile: PetProfile, visual_source: str) -> Path:
     raise ValueError(
         f"Script referenced unknown visual_source {visual_source!r} not in profile media assets"
     )
+
+
+def _resolve_scene_visuals(profile: PetProfile, scene: dict) -> list[Path]:
+    """Every asset path a scene shows, in order. Story scenes name one; the
+    closing recap (pipeline/montage.py) names several."""
+    return [_resolve_visual_path(profile, source) for source in scene_sources(scene)]
+
+
+def _is_animatable(visual_paths: list[Path]) -> bool:
+    """I2V animates a single still photo. The closing recap shows several
+    assets in one shot and real footage already moves, so neither is a
+    candidate — a scene id naming one is simply not animated."""
+    return len(visual_paths) == 1 and visual_paths[0].suffix.lower() in PHOTO_EXTENSIONS
 
 
 def render_script(
@@ -97,8 +112,8 @@ def render_script(
     for scene in script["scenes"]:
         if reusable_clips[scene["scene_id"]] is not None:
             continue
-        visual_path = _resolve_visual_path(profile, scene["visual_source"])
-        if scene["scene_id"] in animate_scenes and visual_path.suffix.lower() in PHOTO_EXTENSIONS:
+        visual_paths = _resolve_scene_visuals(profile, scene)
+        if scene["scene_id"] in animate_scenes and _is_animatable(visual_paths):
             will_animate = True
 
     # Same reasoning one step further out: if any scene still needs I2V, make
@@ -149,8 +164,8 @@ def render_script(
             video_clip_paths.append(reused)
             continue
 
-        visual_path = _resolve_visual_path(profile, scene["visual_source"])
-        animated = scene_id in animate_scenes and visual_path.suffix.lower() in PHOTO_EXTENSIONS
+        visual_paths = _resolve_scene_visuals(profile, scene)
+        animated = scene_id in animate_scenes and _is_animatable(visual_paths)
         on_progress(
             f"鏡頭 {index + 1}/{scene_count}"
             + (f"：{video_provider} 動態化中（比較久）" if animated else "：剪輯與字幕"),
@@ -159,32 +174,42 @@ def render_script(
 
         tracker.start_scene(
             scene_id,
-            visual_source=scene["visual_source"],
+            visual_source=", ".join(scene_sources(scene)),
             video_provider=video_provider if animated else None,
             animate_prompt=animate_prompt if animated else None,
         )
         clip_path = work_dir / f"scene_{scene_id}.mp4"
         try:
-            if animated:
-                i2v_path = work_dir / f"scene_{scene_id}_i2v.mp4"
-                animate_photo(
-                    str(visual_path),
-                    load_i2v_provider(),
+            if len(visual_paths) > 1:
+                # The closing recap: several assets sharing one shot.
+                build_recap_clip(
+                    visual_paths=[str(p) for p in visual_paths],
                     duration=duration,
-                    output_path=str(i2v_path),
-                    prompt=animate_prompt,
+                    subtitle_text=scene["subtitle"],
+                    output_path=str(clip_path),
                 )
-                # build_scene_clip below treats any non-photo-suffix input as
-                # real footage (loop-if-short + crop, see pipeline/editing.py),
-                # which is exactly what a raw I2V clip needs too.
-                visual_path = i2v_path
+            else:
+                visual_path = visual_paths[0]
+                if animated:
+                    i2v_path = work_dir / f"scene_{scene_id}_i2v.mp4"
+                    animate_photo(
+                        str(visual_path),
+                        load_i2v_provider(),
+                        duration=duration,
+                        output_path=str(i2v_path),
+                        prompt=animate_prompt,
+                    )
+                    # build_scene_clip below treats any non-photo-suffix input
+                    # as real footage (loop-if-short + crop, see
+                    # pipeline/editing.py), which is what a raw I2V clip needs.
+                    visual_path = i2v_path
 
-            build_scene_clip(
-                visual_path=str(visual_path),
-                duration=duration,
-                subtitle_text=scene["subtitle"],
-                output_path=str(clip_path),
-            )
+                build_scene_clip(
+                    visual_path=str(visual_path),
+                    duration=duration,
+                    subtitle_text=scene["subtitle"],
+                    output_path=str(clip_path),
+                )
         except Exception as e:
             # Boundary: FFmpeg and the I2V providers are external. Record
             # which scene died before re-raising, so a resume knows where to

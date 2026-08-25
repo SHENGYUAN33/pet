@@ -193,3 +193,38 @@ def test_render_script_does_not_preflight_when_nothing_is_animated(
     )
 
     assert abs(_probe_duration(final_path) - 3.0) < 0.2
+
+
+def test_render_script_cuts_through_every_asset_of_a_recap_scene(photo_profile, tmp_path):
+    """A recap shot names several assets and has to come back as one clip of
+    the full shot length — that is what puts the left-out photos on screen."""
+    photo = photo_profile.media.assets[0].url
+    photo_profile.media.assets.append(
+        photo_profile.media.assets[0].model_copy(update={"asset_id": "IMG-002", "url": photo})
+    )
+
+    script = {
+        "style": "cute",
+        "scenes": [
+            {
+                "scene_id": 1,
+                "start": 0,
+                "end": 3,
+                "visual_source": "IMG-001",
+                "subtitle": "故事",
+            },
+            {
+                "scene_id": 2,
+                "start": 3,
+                "end": 5,
+                "purpose": "recap",
+                "visual_sources": ["IMG-001", "IMG-002"],
+                "subtitle": "點我看領養資訊",
+                "narration": "",
+            },
+        ],
+    }
+
+    final_path = render_script(photo_profile, script, tmp_path / "work")
+
+    assert abs(_probe_duration(final_path) - 5.0) < 0.3

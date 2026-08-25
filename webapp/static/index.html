@@ -703,6 +703,10 @@ textarea.auto { min-height: 76px; resize: vertical; font-family: inherit; }
             <input type="number" name="duration" value="30" min="5" max="120" />
           </label>
           <p class="hint" id="scene-plan"></p>
+          <label class="check" style="margin-bottom:12px">
+            <input type="checkbox" name="recap_unused_assets" />
+            <span>片尾補一段快切，把沒排進鏡頭的素材都帶到</span>
+          </label>
 
           <details class="adv">
             <summary>音訊素材（選填）</summary>
@@ -1170,9 +1174,12 @@ async function refreshScenePlan() {
     text +=
       ` 你只有 ${plan.asset_count} 個素材，少於最少鏡頭數，會有素材重複出現。`;
   } else if (plan.unused_assets) {
+    const recapOn = $("generate-form").elements.recap_unused_assets.checked;
     text +=
-      ` 你有 ${plan.asset_count} 個素材，這支影片最多用到 ${plan.usable_assets} 個，` +
-      `其餘 ${plan.unused_assets} 個不會出現（由腳本挑選；事後可用單鏡頭重生換素材）。`;
+      ` 你有 ${plan.asset_count} 個素材，敘事鏡頭最多用到 ${plan.usable_assets} 個，` +
+      (recapOn
+        ? `剩下的 ${plan.unused_assets} 個會做成片尾快切，全部都會出現。`
+        : `其餘 ${plan.unused_assets} 個不會出現 — 勾選下方選項可以把它們補成片尾快切。`);
   } else {
     text += ` 你的 ${plan.asset_count} 個素材都用得上。`;
   }
@@ -1406,6 +1413,7 @@ document.querySelectorAll(".tab").forEach((t) => {
 
 /* ---------- generate ---------- */
 $("generate-form").elements.duration.addEventListener("input", scheduleScenePlan);
+$("generate-form").elements.recap_unused_assets.addEventListener("change", refreshScenePlan);
 
 $("generate-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -1422,6 +1430,7 @@ $("generate-form").addEventListener("submit", async (e) => {
       : null,
     video_provider: form.get("video_provider"),
     animate_prompt: form.get("animate_prompt") || null,
+    recap_unused_assets: form.get("recap_unused_assets") === "on",
   };
   try {
     const task = await api("/api/pets/" + encodeURIComponent(currentPetId) + "/generate", {

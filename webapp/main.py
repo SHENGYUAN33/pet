@@ -229,6 +229,7 @@ class GenerateRequest(BaseModel):
     animate_scenes: list[int] | None = None
     video_provider: str = "svd"
     animate_prompt: str | None = None
+    recap_unused_assets: bool = False
 
 
 class RegenerateSceneRequest(BaseModel):
@@ -313,6 +314,7 @@ def api_generate(pet_id: str, req: GenerateRequest):
             animate_scenes=set(req.animate_scenes) if req.animate_scenes else None,
             video_provider=req.video_provider,
             animate_prompt=req.animate_prompt,
+            recap_unused_assets=req.recap_unused_assets,
             on_progress=on_progress,
         )
         return {"output_path": output_path, "job_id": job_id}

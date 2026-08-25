@@ -33,6 +33,16 @@ MAX_SCENES = int(os.getenv("MAX_SCENES", "7"))
 MIN_SCENE_DURATION = int(os.getenv("MIN_SCENE_DURATION", "3"))
 MAX_SCENE_DURATION = int(os.getenv("MAX_SCENE_DURATION", "6"))
 
+# Closing recap of the assets the script had no room for. A 30s video is 5-7
+# shots showing one asset each, so a pet with thirteen photos leaves six of
+# them out; rather than lengthening the story shots (which are paced to one
+# line of narration each), the leftovers get a quick cut at the end. Per-asset
+# duration shrinks toward RECAP_MIN_ASSET_DURATION as the leftovers pile up,
+# so every one of them still appears instead of the recap growing forever.
+RECAP_ASSET_DURATION = float(os.getenv("RECAP_ASSET_DURATION", "0.7"))
+RECAP_MIN_ASSET_DURATION = float(os.getenv("RECAP_MIN_ASSET_DURATION", "0.35"))
+RECAP_MAX_DURATION = float(os.getenv("RECAP_MAX_DURATION", "6"))
+
 # Pet catalog + generation job history (MVP: replaces scanning storage/profiles/
 # for the pipeline's own reads; storage/assets and storage/output stay on the
 # filesystem — the DB only stores metadata, not media).

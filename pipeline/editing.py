@@ -128,6 +128,37 @@ def _concat_via_demuxer(paths: list[str], output_path: str, *, extra_args: list[
     return output_path
 
 
+def build_recap_clip(
+    *,
+    visual_paths: list[str],
+    duration: float,
+    subtitle_text: str,
+    output_path: str,
+) -> str:
+    """Render one shot that cuts through several assets in turn.
+
+    The closing recap (pipeline/montage.py) shows the assets the story shots
+    had no room for. Each asset becomes an ordinary scene clip of an equal
+    slice of the shot, so the Ken Burns move, the subtitle burn-in and the
+    constant frame rate are the ones every other clip gets — they are then
+    concatenated into the single clip the scene loop expects back.
+    """
+    per_asset = duration / len(visual_paths)
+    out = Path(output_path)
+    parts = []
+    for index, visual_path in enumerate(visual_paths, start=1):
+        part = out.with_name(f"{out.stem}_part{index}{out.suffix}")
+        parts.append(
+            build_scene_clip(
+                visual_path=visual_path,
+                duration=per_asset,
+                subtitle_text=subtitle_text,
+                output_path=str(part),
+            )
+        )
+    return concat_video_only(parts, output_path)
+
+
 def concat_video_only(clip_paths: list[str], output_path: str) -> str:
     """Concatenate the (audio-less) per-scene video clips into one track."""
     return _concat_via_demuxer(clip_paths, output_path, extra_args=["-c:v", "copy"])

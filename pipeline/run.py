@@ -8,6 +8,7 @@ from pathlib import Path
 from pipeline import config
 from pipeline.fact_check import find_missing_disclosures
 from pipeline.models import JobStatus
+from pipeline.montage import append_recap_scene
 from pipeline.pet_repo import (
     fail_generation_job,
     finish_generation_job,
@@ -35,6 +36,7 @@ def generate_video(
     animate_scenes: set[int] | None = None,
     video_provider: str = "svd",
     animate_prompt: str | None = None,
+    recap_unused_assets: bool = False,
     on_progress: ProgressCallback = noop,
 ) -> tuple[str, int]:
     """voice_sample=None runs without narration (silent placeholder audio
@@ -42,6 +44,10 @@ def generate_video(
     before a TTS voice reference is available. music_track=None skips
     background music (narration/silence only). Returns (output_path, job_id)
     — job_id can later be passed to pipeline.regen.regenerate_scene().
+    recap_unused_assets appends a closing quick-cut of the assets the
+    script had no room for (see pipeline/montage.py) — a 30-second video is
+    5-7 shots, so a pet with thirteen photos otherwise leaves six of them
+    unseen. It makes the video longer by the recap's own length.
     on_progress (see pipeline/progress.py) reports the current stage; the
     CLI leaves it at the no-op default."""
     on_progress("讀取寵物資料", 0.01)
@@ -81,6 +87,7 @@ def generate_video(
             animate_scenes=animate_scenes,
             video_provider=video_provider,
             animate_prompt=animate_prompt,
+            recap_unused_assets=recap_unused_assets,
             on_progress=on_progress,
         )
     except Exception as e:
@@ -101,6 +108,7 @@ def _run_generation(
     animate_scenes: set[int] | None,
     video_provider: str,
     animate_prompt: str | None,
+    recap_unused_assets: bool,
     on_progress: ProgressCallback,
 ) -> str:
     """The body of generate_video() — split out so the job row is closed as
@@ -145,6 +153,12 @@ def _run_generation(
 
     on_progress("事實與結構檢查", 0.34)
     script = scripts[style]
+    if recap_unused_assets:
+        # Appended here rather than inside rendering so the script recorded on
+        # the job row is the one that gets rendered: resume and single-shot
+        # regeneration both read the script back from there, and a recap that
+        # only existed at render time would quietly disappear from both.
+        script = append_recap_scene(script, profile)
 
     work_dir = config.OUTPUT_DIR / profile.pet_id / f"gen_{uuid.uuid4().hex[:8]}"
     # Attached before rendering, not after: resume_generation_job() needs the
@@ -269,6 +283,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Which open-source I2V model to use with --animate-scenes (default: svd)",
     )
     parser.add_argument(
+        "--recap-unused-assets",
+        action="store_true",
+        help="Append a closing quick-cut of the assets the script had no room for, "
+        "so every uploaded photo/video appears (lengthens the video)",
+    )
+    parser.add_argument(
         "--animate-prompt",
         default=None,
         help="Motion guidance for animated scenes, e.g. '貓輕輕搖尾巴、抬頭看鏡頭' "
@@ -293,6 +313,7 @@ def main() -> None:
         animate_scenes=animate_scenes,
         video_provider=args.video_provider,
         animate_prompt=args.animate_prompt,
+        recap_unused_assets=args.recap_unused_assets,
     )
     print(f"Job id: {job_id}")
     print(f"Done: {output_path}")
