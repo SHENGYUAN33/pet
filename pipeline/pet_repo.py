@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import shutil
 from datetime import UTC, datetime
+from pathlib import Path
 
+from pipeline import config
 from pipeline.db import get_session
 from pipeline.models import GenerationJob, JobStatus, Pet, SceneJob
 from pipeline.profile import PetProfile
@@ -153,6 +156,7 @@ def get_generation_job(job_id: int) -> dict | None:
             "animate_prompt": row.animate_prompt,
             "script_json": row.script_json,
             "parent_job_id": row.parent_job_id,
+            "cleaned_at": row.cleaned_at.isoformat() if row.cleaned_at else None,
         }
 
 
@@ -178,6 +182,7 @@ def list_generation_jobs(pet_id: str) -> list[dict]:
                 "parent_job_id": row.parent_job_id,
                 "created_at": row.created_at.isoformat(),
                 "finished_at": row.finished_at.isoformat() if row.finished_at else None,
+                "cleaned_at": row.cleaned_at.isoformat() if row.cleaned_at else None,
             }
             for row in rows
         ]
@@ -332,3 +337,42 @@ def reap_interrupted_jobs(reason: str) -> list[int]:
                 )
             )
         return job_ids
+
+
+def cleanup_generation_job(job_id: int) -> dict:
+    """Delete a run's rendered files, keeping the row that describes it.
+
+    What the project requires kept is the provenance — which provider,
+    prompt and script produced each shot (CLAUDE.md 開發規範) — not the
+    hundreds of megabytes of scene clips beside it. So this removes the
+    work_dir and marks the row cleaned; script_json, the provider settings
+    and the QA results all stay readable afterwards.
+
+    Refuses to touch anything outside storage/output/: work_dir is a stored
+    string, and a delete driven by stored state should not be able to reach
+    the rest of the disk if that string is ever wrong.
+
+    Returns what was freed. Already-cleaned jobs are a no-op, not an error —
+    the point is for the files to be gone.
+    """
+    with get_session() as session:
+        job = session.get(GenerationJob, job_id)
+        if job is None:
+            raise ValueError(f"No generation job found with id {job_id}")
+        if job.status == JobStatus.RUNNING.value:
+            raise ValueError(f"Job {job_id} is still running — let it finish before cleaning up")
+
+        freed = 0
+        if job.work_dir:
+            work_dir = Path(job.work_dir).resolve()
+            output_root = config.OUTPUT_DIR.resolve()
+            if not work_dir.is_relative_to(output_root):
+                raise ValueError(f"Refusing to delete {work_dir} — outside {output_root}")
+            if work_dir.exists():
+                freed = sum(f.stat().st_size for f in work_dir.rglob("*") if f.is_file())
+                shutil.rmtree(work_dir)
+
+        already_clean = job.cleaned_at is not None
+        if not already_clean:
+            job.cleaned_at = datetime.now(UTC)
+        return {"job_id": job_id, "bytes_freed": freed, "already_clean": already_clean}

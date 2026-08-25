@@ -491,3 +491,27 @@ def test_regenerate_rejects_motion_guidance_without_animation(client):
 
     assert response.status_code == 400
     assert "動態化" in response.json()["detail"]
+
+
+def test_cleaned_version_reports_deleted_rather_than_missing(client):
+    """A cleanup is deliberate, so playing it must not read as a lost file."""
+    from tests.conftest import completed_job
+
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+    work_dir = config.OUTPUT_DIR / TEST_PET_ID / "gen_webapp_cleanup"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    (work_dir / "final.mp4").write_bytes(b"video")
+    job_id = completed_job(
+        TEST_PET_ID, work_dir=str(work_dir), output_path=str(work_dir / "final.mp4")
+    )
+
+    cleanup = client.delete(f"/api/jobs/{job_id}/files")
+    assert cleanup.status_code == 200
+    assert cleanup.json()["bytes_freed"] == 5
+
+    assert client.get(f"/api/jobs/{job_id}/video").status_code == 410
+
+    # The record is what has to survive.
+    job = client.get(f"/api/jobs/{job_id}").json()
+    assert job["cleaned_at"] is not None
+    assert job["script_json"] is not None

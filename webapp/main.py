@@ -33,6 +33,7 @@ from pydantic import BaseModel, ValidationError
 
 from pipeline import config
 from pipeline.pet_repo import (
+    cleanup_generation_job,
     get_generation_job,
     get_pet,
     list_generation_jobs,
@@ -322,6 +323,19 @@ def api_generate(pet_id: str, req: GenerateRequest):
     return _start(kind="generate", pet_id=pet_id, label="產生新影片", work=work)
 
 
+@app.delete("/api/jobs/{job_id}/files")
+def api_cleanup_job(job_id: int):
+    """Delete a version's rendered files, keeping its generation record.
+
+    Named for what it removes: the row survives, because the provider,
+    prompt and script that produced the video are what the project requires
+    kept (CLAUDE.md 開發規範) — the scene clips are not."""
+    try:
+        return cleanup_generation_job(job_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
 @app.post("/api/jobs/{job_id}/regenerate-scene", status_code=202)
 def api_regenerate_scene(job_id: int, req: RegenerateSceneRequest):
     job = get_generation_job(job_id)
@@ -440,6 +454,13 @@ def api_get_job_video(job_id: int):
             status_code=409,
             detail=f"這個版本還沒有影片（狀態：{job['status']}）"
             + (f"：{job['error']}" if job["error"] else ""),
+        )
+    if job["cleaned_at"]:
+        # Deliberately deleted, not lost — say which, so this doesn't read as
+        # a bug in the pipeline.
+        raise HTTPException(
+            status_code=410,
+            detail="這個版本的檔案已被清理（生成紀錄仍保留），無法播放",
         )
     path = Path(job["output_path"])
     if not path.exists():

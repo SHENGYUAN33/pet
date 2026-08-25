@@ -1202,6 +1202,9 @@ function renderJobs() {
     // a run that is still going or that died — only a finished one has a
     // video to play or a script to regenerate a scene from.
     const done = job.status === "done";
+    // Files deleted to reclaim space; the record stays, so the card still
+    // shows what produced this version — it just can't be played.
+    const cleaned = Boolean(job.cleaned_at);
 
     const div = document.createElement("div");
     div.className = "job" + (job.id === playingJobId ? " playing" : "");
@@ -1214,6 +1217,7 @@ function renderJobs() {
       job.status === "failed" ? '<span class="badge danger">✕ 失敗</span>' : "",
       '<span class="badge accent">' + (STYLE_LABEL[job.style] || job.style) + "</span>",
       done ? '<span class="badge">' + job.duration + "s · " + job.scene_count + " 鏡頭</span>" : "",
+      cleaned ? '<span class="badge">🗑 已清理檔案</span>' : "",
       job.parent_job_id ? '<span class="badge">↺ 重生自 ' + job.parent_job_id + "</span>" : "",
       done && !missing.length && !issues.length ? '<span class="badge ok">✓ 檢查通過</span>' : "",
       '<span class="job-time">' + new Date(job.created_at).toLocaleString("zh-TW") + "</span>",
@@ -1245,12 +1249,13 @@ function renderJobs() {
     playBtn.type = "button";
     playBtn.className = "tiny";
     playBtn.textContent = job.id === playingJobId ? "▶ 播放中" : "▶ 播放";
-    playBtn.disabled = !done;
+    playBtn.disabled = !done || cleaned;
     playBtn.onclick = (e) => { e.stopPropagation(); playJob(job.id, true); };
     const regenBtn = document.createElement("button");
     regenBtn.type = "button";
     regenBtn.className = "tiny";
     regenBtn.textContent = "🎬 改這個版本的鏡頭";
+    // Regeneration only needs the script, which the cleanup keeps.
     regenBtn.disabled = !done;
     regenBtn.onclick = (e) => { e.stopPropagation(); openRegenFor(job.id); };
     actions.append(playBtn, regenBtn);
@@ -1266,10 +1271,40 @@ function renderJobs() {
       resumeBtn.onclick = (e) => { e.stopPropagation(); resumeJob(job.id); };
       actions.appendChild(resumeBtn);
     }
+
+    if (!cleaned && job.status !== "running") {
+      const cleanBtn = document.createElement("button");
+      cleanBtn.type = "button";
+      cleanBtn.className = "tiny";
+      cleanBtn.textContent = "🗑 清理檔案";
+      cleanBtn.title = "刪除這個版本的影片與鏡頭檔案，釋放空間。生成紀錄（腳本、provider、prompt）會保留。";
+      cleanBtn.onclick = (e) => { e.stopPropagation(); cleanupJob(job.id); };
+      actions.appendChild(cleanBtn);
+    }
     div.appendChild(actions);
 
-    if (done) div.onclick = () => playJob(job.id);
+    if (done && !cleaned) div.onclick = () => playJob(job.id);
     host.appendChild(div);
+  }
+}
+
+async function cleanupJob(jobId) {
+  const ok = confirm(
+    "刪除 Job " + jobId + " 的影片與鏡頭檔案？
+
+" +
+      "生成紀錄（腳本、用了哪個模型與 prompt、QA 結果）會保留，之後仍可以從這個版本重生鏡頭，" +
+      "但影片本身無法再播放，也無法復原。"
+  );
+  if (!ok) return;
+  try {
+    const result = await api("/api/jobs/" + jobId + "/files", { method: "DELETE" });
+    const mb = (result.bytes_freed / 1048576).toFixed(1);
+    toast("已清理 Job " + jobId + "，釋放 " + mb + " MB", "ok");
+    if (playingJobId === jobId) playJob(null);
+    await selectPet(currentPetId, true);
+  } catch (err) {
+    toast("清理失敗：" + err.message, "err");
   }
 }
 

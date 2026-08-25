@@ -48,6 +48,29 @@ def cmd_show_pet(args) -> None:
         print(json.dumps(job, ensure_ascii=False, indent=2))
 
 
+def cmd_cleanup_jobs(args) -> None:
+    """Free the disk a pet's older versions are holding.
+
+    Keeps the newest --keep versions playable and deletes the rendered files
+    of the rest. The rows stay either way — what the project requires kept is
+    the record of which provider, prompt and script produced each video, not
+    the clips.
+    """
+    jobs = pet_repo.list_generation_jobs(args.pet_id)
+    stale = [j for j in jobs[args.keep :] if not j["cleaned_at"] and j["status"] != "running"]
+    if not stale:
+        print(f"Nothing to clean up for {args.pet_id} (keeping the newest {args.keep}).")
+        return
+
+    total = 0
+    for job in stale:
+        result = pet_repo.cleanup_generation_job(job["id"])
+        total += result["bytes_freed"]
+        print(f"Cleaned job {job['id']}: freed {result['bytes_freed'] / 1048576:.1f} MB")
+    print()
+    print(f"Freed {total / 1048576:.1f} MB across {len(stale)} version(s).")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Manage the pet catalog database")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -67,6 +90,19 @@ def main() -> None:
     )
     show_parser.add_argument("pet_id")
     show_parser.set_defaults(func=cmd_show_pet)
+
+    cleanup_parser = subparsers.add_parser(
+        "cleanup-jobs",
+        help="Delete the rendered files of a pet's older versions (keeps the records)",
+    )
+    cleanup_parser.add_argument("pet_id")
+    cleanup_parser.add_argument(
+        "--keep",
+        type=int,
+        default=3,
+        help="How many of the newest versions to leave playable (default: 3)",
+    )
+    cleanup_parser.set_defaults(func=cmd_cleanup_jobs)
 
     args = parser.parse_args()
     args.func(args)

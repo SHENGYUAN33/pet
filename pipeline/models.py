@@ -109,6 +109,12 @@ class GenerationJob(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Set when this run's rendered files are deleted to reclaim space. The row
+    # itself stays: the project requires every video to keep a record of which
+    # provider, prompt and script produced it (CLAUDE.md 開發規範), so a
+    # cleanup removes the output, never the provenance. output_path is left
+    # in place as part of that record and must not be played once this is set.
+    cleaned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     pet: Mapped[Pet] = relationship(back_populates="generation_jobs")
     scene_jobs: Mapped[list[SceneJob]] = relationship(
