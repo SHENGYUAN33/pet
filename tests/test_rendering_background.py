@@ -70,10 +70,14 @@ class FakeBackgroundProvider(ImageEditingProvider):
         target_height: int,
         prompt: str | None = None,
         output_path: str,
+        subject: str | None = None,
     ) -> str:
-        """Same stand-in, recording the mode so a test can tell which
-        treatment render_script asked for."""
-        self.calls.append({"image_path": image_path, "prompt": prompt, "mode": "replace"})
+        """Same stand-in, recording the mode and the subject so a test can
+        tell which treatment render_script asked for, and what it said to
+        keep in the frame."""
+        self.calls.append(
+            {"image_path": image_path, "prompt": prompt, "mode": "replace", "subject": subject}
+        )
         return self._write_frame(target_width, target_height, output_path)
 
 
@@ -353,3 +357,21 @@ def test_an_untouched_scene_is_not_labelled(photo_profile, tmp_path):
     render_script(photo_profile, _script_with_one_photo_scene(), work_dir)
 
     assert not (work_dir / "scene_1.disclosure.txt").exists()
+
+
+def test_replace_is_told_which_animal_to_keep(photo_profile, tmp_path, monkeypatch):
+    """The profile knows the species and the provider does not, so rendering
+    has to pass it through — otherwise a dog's photo is segmented by whatever
+    the provider guesses at."""
+    provider = FakeBackgroundProvider()
+    monkeypatch.setattr("pipeline.rendering.get_image_provider", lambda name: provider)
+
+    render_script(
+        photo_profile,
+        _script_with_one_photo_scene(),
+        tmp_path / "work",
+        background_scenes={1},
+        background_mode=BackgroundMode.REPLACE,
+    )
+
+    assert [call["subject"] for call in provider.calls] == [photo_profile.species]

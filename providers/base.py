@@ -128,6 +128,7 @@ class ImageEditingProvider(ABC):
         target_height: int,
         prompt: str | None = None,
         output_path: str,
+        subject: str | None = None,
     ) -> str:
         """Put the subject of image_path into a generated setting at
         target_width x target_height, and write the result to output_path
@@ -139,6 +140,12 @@ class ImageEditingProvider(ABC):
         work to do — a photo already shaped like the frame still has its
         whole background replaced.
 
-        prompt describes the finished picture, subject included, since the
-        generated area is produced from it alone.
+        prompt describes the setting to generate, and should *not* name an
+        animal: the real one is already in the frame, and asking for one
+        paints a second beside it.
+
+        subject names what to keep ("cat", "dog"), for implementations that
+        segment by description rather than by salience. The caller knows the
+        pet's species and the provider does not, so it is passed in;
+        implementations that don't need it ignore it.
         """

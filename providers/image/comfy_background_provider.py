@@ -9,7 +9,7 @@ for the product reasoning):
            Here the bands are generated and the photo's own background is
            kept — nothing the camera saw is replaced.
 
-  replace  BiRefNet cuts the pet out and the whole rest of the frame is
+  replace  The pet is segmented out and the whole rest of the frame is
            generated, so the animal can be shown somewhere it has never
            been. The place is invented; the animal is not.
 
@@ -21,10 +21,10 @@ final composite "the pet is never redrawn" would be false in practice. The
 only difference between the two treatments is which mask says "generate
 here" and which says "keep the photograph".
 
-Core ComfyUI nodes throughout (ImagePadForOutpaint / RemoveBackground /
-VAEEncodeForInpaint / KSampler / ImageCompositeMasked) plus KJNodes'
-GrowMaskWithBlur, which the Wan2.2 provider already requires. So the only
-things to install are the two model files named in config.
+Core ComfyUI nodes throughout (ImagePadForOutpaint / SAM3_Detect or
+RemoveBackground / VAEEncodeForInpaint / KSampler / ImageCompositeMasked)
+plus KJNodes' GrowMaskWithBlur, which the Wan2.2 provider already requires.
+So the only things to install are the model files named in config.
 """
 
 from __future__ import annotations
@@ -60,8 +60,13 @@ INVERTED_MASK = "11"
 COMPOSITE = "12"
 MATTE_MODEL = "13"
 MATTE = "14"
+SUBJECT_TEXT = "17"
+EMPTY_CANVAS_MASK = "20"
+PLACED_MATTE = "21"
 SOLID_MATTE = "16"
 SUBJECT_MASK = "15"
+MASK_IMAGE = "18"
+SAVE_MASK = "19"
 
 
 class OutpaintMargins:
@@ -156,6 +161,45 @@ def probe_image_size(image_path: str) -> tuple[int, int]:
     )
     width, height = result.stdout.strip().split("x")
     return int(width), int(height)
+
+
+def mask_coverage(mask_path: str) -> float:
+    """Share of the frame a saved mask covers, 0.0-1.0.
+
+    Measured with FFmpeg rather than by loading the image, because FFmpeg is
+    already a hard requirement here while an imaging library is not (see
+    probe_image_size). Scaling the mask to a single pixel with area
+    resampling *is* the mean, so that one byte is the answer.
+
+    Written to a file rather than read off a pipe: FFmpeg's signalstats
+    prints to stderr, and stderr came back empty when this ran inside the
+    full pipeline (something in the process had already made captured
+    output unavailable), which turned a working check into a crash. A file
+    the caller names cannot be taken away like that.
+    """
+    raw_path = Path(mask_path).with_suffix(".coverage.raw")
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-v",
+            "error",
+            "-i",
+            mask_path,
+            "-vf",
+            "format=gray,scale=1:1:flags=area",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "gray",
+            str(raw_path),
+        ],
+        check=True,
+    )
+    average = raw_path.read_bytes()
+    if len(average) != 1:
+        raise RuntimeError(f"FFmpeg did not reduce {mask_path} to one pixel")
+    return average[0] / 255.0
 
 
 class ComfyBackgroundProvider(ImageEditingProvider):
@@ -276,35 +320,112 @@ class ComfyBackgroundProvider(ImageEditingProvider):
         graph[COMPOSITE]["inputs"]["mask"] = [INVERTED_MASK, 0]
         return graph
 
+    def _matte_nodes(self, subject: str, margins: OutpaintMargins) -> dict:
+        """Nodes producing a mask of the pet on the full frame-sized canvas.
+
+        Segmentation runs on the *scaled* photo, before the frame padding is
+        added, and the resulting mask is then placed onto an empty canvas at
+        the same offset. Running it after the padding cost SAM3 the subject
+        entirely: a clearly visible cat measured 2.4% of the frame on the
+        scaled photo and 0.0% once the grey bars were around it (measured on
+        a real asset — the bars are not something a photo ever has, so the
+        detector is being shown an image unlike anything it was trained on).
+        The two paths both end at PLACED_MATTE output 0, so the rest of the
+        replace graph does not care which one ran.
+        """
+        placement = {
+            EMPTY_CANVAS_MASK: {
+                "class_type": "SolidMask",
+                "inputs": {
+                    "value": 0.0,
+                    "width": margins.left + margins.fit_width + margins.right,
+                    "height": margins.top + margins.fit_height + margins.bottom,
+                },
+            },
+            PLACED_MATTE: {
+                "class_type": "MaskComposite",
+                "inputs": {
+                    "destination": [EMPTY_CANVAS_MASK, 0],
+                    "source": [MATTE, 0],
+                    "x": margins.left,
+                    "y": margins.top,
+                    # The canvas is empty, so adding the matte onto it is a
+                    # placement rather than a blend — the generated margin
+                    # stays background, which is what it is.
+                    "operation": "add",
+                },
+            },
+        }
+
+        if config.BACKGROUND_MATTE_BACKEND == "birefnet":
+            return {
+                MATTE_MODEL: {
+                    "class_type": "LoadBackgroundRemovalModel",
+                    "inputs": {"bg_removal_name": config.BACKGROUND_MATTE_MODEL_FILE},
+                },
+                MATTE: {
+                    "class_type": "RemoveBackground",
+                    "inputs": {"bg_removal_model": [MATTE_MODEL, 0], "image": [SCALE, 0]},
+                },
+                **placement,
+            }
+
+        # SAM3: told what to look for, so it returns the animal and not
+        # whatever the animal happens to be sitting on.
+        return {
+            MATTE_MODEL: {
+                "class_type": "CheckpointLoaderSimple",
+                "inputs": {"ckpt_name": config.BACKGROUND_SAM3_MODEL_FILE},
+            },
+            SUBJECT_TEXT: {
+                "class_type": "CLIPTextEncode",
+                "inputs": {"text": subject, "clip": [MATTE_MODEL, 1]},
+            },
+            MATTE: {
+                "class_type": "SAM3_Detect",
+                "inputs": {
+                    "model": [MATTE_MODEL, 0],
+                    "image": [SCALE, 0],
+                    "conditioning": [SUBJECT_TEXT, 0],
+                    "threshold": config.BACKGROUND_SAM3_THRESHOLD,
+                    "refine_iterations": config.BACKGROUND_SAM3_REFINE_ITERATIONS,
+                    # One mask covering everything it found, not one per
+                    # object: a photo with two of the shelter's cats in it
+                    # should keep both, and the rest of the graph takes a
+                    # single mask.
+                    "individual_masks": False,
+                },
+            },
+            **placement,
+        }
+
     def _replace_graph(
-        self, image_filename: str, margins: OutpaintMargins, prompt: str, output_prefix: str
+        self,
+        image_filename: str,
+        margins: OutpaintMargins,
+        prompt: str,
+        output_prefix: str,
+        subject: str,
     ) -> dict:
         """Generate everything except the pet.
 
-        BiRefNet mattes the subject out of the padded canvas, the matte is
-        softened, and the sampler gets its complement while the composite
-        gets the matte itself — so the background is repainted and the animal
-        is restored through the same softened edge. That blur is what stops
-        the result reading as a sticker pasted on a picture.
+        The subject is matted out of the padded canvas, the matte is softened,
+        and the sampler gets its complement while the composite gets the matte
+        itself — so the background is repainted and the animal is restored
+        through the same softened edge. That blur is what stops the result
+        reading as a sticker pasted on a picture.
         """
         graph = self._common_nodes(image_filename, margins, prompt, output_prefix)
-        graph[MATTE_MODEL] = {
-            "class_type": "LoadBackgroundRemovalModel",
-            "inputs": {"bg_removal_name": config.BACKGROUND_MATTE_MODEL_FILE},
-        }
-        graph[MATTE] = {
-            "class_type": "RemoveBackground",
-            "inputs": {"bg_removal_model": [MATTE_MODEL, 0], "image": [PAD, 0]},
-        }
-        # BiRefNet returns confidences, not a binary matte, and a hazy photo
-        # (one shot through glass, say) comes back around 0.5 across the whole
+        graph.update(self._matte_nodes(subject, margins))
+        # Matting returns confidences, not a binary mask, and a hazy photo
+        # (one shot through glass, say) came back around 0.5 across the whole
         # animal. Composited straight, that half-blends the pet with the
         # generated room and it appears as a ghost — measured on a real
         # asset. Thresholding first makes the subject solid; the blur below
         # then puts a soft edge back where it belongs, at the outline.
         graph[SOLID_MATTE] = {
             "class_type": "ThresholdMask",
-            "inputs": {"mask": [MATTE, 0], "value": config.BACKGROUND_MATTE_THRESHOLD},
+            "inputs": {"mask": [PLACED_MATTE, 0], "value": config.BACKGROUND_MATTE_THRESHOLD},
         }
         graph[SUBJECT_MASK] = {
             "class_type": "GrowMaskWithBlur",
@@ -318,7 +439,7 @@ class ComfyBackgroundProvider(ImageEditingProvider):
                 "lerp_alpha": 1.0,
                 "decay_factor": 1.0,
                 # Off: this node's hole-filling returned a fully white mask
-                # for a clean BiRefNet matte (measured), which makes the
+                # for a clean matte (measured), which makes the
                 # subject "everything" — the sampler then has nothing to
                 # repaint and the photo comes back unchanged. BiRefNet's
                 # matte is solid enough not to need it.
@@ -334,6 +455,16 @@ class ComfyBackgroundProvider(ImageEditingProvider):
         }
         graph[ENCODE]["inputs"]["mask"] = [INVERTED_MASK, 0]
         graph[COMPOSITE]["inputs"]["mask"] = [SUBJECT_MASK, 0]
+
+        # Saved so the caller can check the subject was actually found before
+        # accepting the result — see _run. It doubles as the record of what
+        # was cut out, which is the first thing to look at when a replaced
+        # shot comes out wrong.
+        graph[MASK_IMAGE] = {"class_type": "MaskToImage", "inputs": {"mask": [SUBJECT_MASK, 0]}}
+        graph[SAVE_MASK] = {
+            "class_type": "SaveImage",
+            "inputs": {"images": [MASK_IMAGE, 0], "filename_prefix": f"{output_prefix}_mask"},
+        }
         return graph
 
     def preflight(self, *, mode: str = "extend") -> None:
@@ -349,18 +480,28 @@ class ComfyBackgroundProvider(ImageEditingProvider):
             )
 
         if mode != "replace":
-            # Matting weights are only loaded by the replace graph, so an
-            # extend-only run must not be blocked on having them.
+            # The matting model is only loaded by the replace graph, so an
+            # extend-only run must not be blocked on having it.
             return
 
-        mattes = self.client.node_options("LoadBackgroundRemovalModel", "bg_removal_name")
-        if config.BACKGROUND_MATTE_MODEL_FILE not in mattes:
+        if config.BACKGROUND_MATTE_BACKEND == "birefnet":
+            mattes = self.client.node_options("LoadBackgroundRemovalModel", "bg_removal_name")
+            if config.BACKGROUND_MATTE_MODEL_FILE not in mattes:
+                raise RuntimeError(
+                    f"ComfyUI has no background-removal model named "
+                    f"{config.BACKGROUND_MATTE_MODEL_FILE!r} (installed: {mattes or 'none'}) — "
+                    "replacing a background needs one to cut the pet out. Put BiRefNet in "
+                    f"{config.WAN_COMFYUI_DIR / 'models' / 'background_removal'} "
+                    "(Comfy-Org/BiRefNet on Hugging Face) and restart ComfyUI."
+                )
+        elif config.BACKGROUND_SAM3_MODEL_FILE not in checkpoints:
             raise RuntimeError(
-                f"ComfyUI has no background-removal model named "
-                f"{config.BACKGROUND_MATTE_MODEL_FILE!r} (installed: {mattes or 'none'}) — "
-                "replacing a background needs one to cut the pet out. Put BiRefNet in "
-                f"{config.WAN_COMFYUI_DIR / 'models' / 'background_removal'} "
-                "(Comfy-Org/BiRefNet on Hugging Face) and restart ComfyUI."
+                f"ComfyUI has no checkpoint named {config.BACKGROUND_SAM3_MODEL_FILE!r} "
+                f"(installed: {checkpoints or 'none'}) — replacing a background needs SAM3 "
+                "to cut the pet out. Put it in "
+                f"{config.WAN_COMFYUI_DIR / 'models' / 'checkpoints'} "
+                "(Comfy-Org/sam3.1 on Hugging Face) and restart ComfyUI, or set "
+                "BACKGROUND_MATTE_BACKEND=birefnet."
             )
 
     def _run(
@@ -372,6 +513,7 @@ class ComfyBackgroundProvider(ImageEditingProvider):
         prompt: str | None,
         output_path: str,
         mode: str,
+        subject: str | None = None,
     ) -> str:
         source_width, source_height = probe_image_size(image_path)
         margins = plan_margins(source_width, source_height, target_width, target_height)
@@ -386,14 +528,47 @@ class ComfyBackgroundProvider(ImageEditingProvider):
 
         image_filename = self.client.upload_image(image_path)
         output_prefix = Path(output_path).stem
-        build = self._extend_graph if mode == "extend" else self._replace_graph
-        entry = self.client.run(
-            build(
-                image_filename, margins, prompt or config.BACKGROUND_DEFAULT_PROMPT, output_prefix
+        full_prompt = prompt or config.BACKGROUND_DEFAULT_PROMPT
+        if mode == "extend":
+            graph = self._extend_graph(image_filename, margins, full_prompt, output_prefix)
+        else:
+            graph = self._replace_graph(
+                image_filename,
+                margins,
+                full_prompt,
+                output_prefix,
+                subject or config.BACKGROUND_SUBJECT_FALLBACK,
             )
-        )
+        entry = self.client.run(graph)
+
+        if mode == "replace":
+            self._require_subject_was_found(entry, image_path, output_path, subject)
 
         return self.client.fetch_output(entry["outputs"][SAVE]["images"][0], output_path)
+
+    def _require_subject_was_found(
+        self, entry: dict, image_path: str, output_path: str, subject: str | None
+    ) -> None:
+        """Refuse a replaced shot whose subject mask is effectively empty.
+
+        The failure this exists for is silent: told to find a cat in a photo
+        that has none, the segmenter correctly returns nothing, the sampler
+        is then free to repaint the whole frame, and the shot comes back as
+        scenery with no animal in it. Better to stop and name the asset.
+        """
+        mask_path = Path(output_path).with_suffix(".mask.png")
+        self.client.fetch_output(entry["outputs"][SAVE_MASK]["images"][0], str(mask_path))
+
+        coverage = mask_coverage(str(mask_path))
+        if coverage < config.BACKGROUND_MIN_SUBJECT_COVERAGE:
+            raise RuntimeError(
+                f"Nothing matching {subject or config.BACKGROUND_SUBJECT_FALLBACK!r} was found "
+                f"in {image_path} (it covers {coverage:.2%} of the frame, below "
+                f"{config.BACKGROUND_MIN_SUBJECT_COVERAGE:.2%}), so replacing the background "
+                f"would have produced a shot with no animal in it. Check that this asset is "
+                f"a photo of the pet, or use --background-mode extend for it. The mask that "
+                f"was produced is at {mask_path}."
+            )
 
     def outpaint_to_frame(
         self,
@@ -421,6 +596,7 @@ class ComfyBackgroundProvider(ImageEditingProvider):
         target_height: int,
         prompt: str | None = None,
         output_path: str,
+        subject: str | None = None,
     ) -> str:
         return self._run(
             image_path,
@@ -429,4 +605,5 @@ class ComfyBackgroundProvider(ImageEditingProvider):
             prompt=prompt,
             output_path=output_path,
             mode="replace",
+            subject=subject,
         )

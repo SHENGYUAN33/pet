@@ -18,6 +18,7 @@ from pipeline import config
 from providers.image.comfy_background_provider import (
     LATENT_ALIGN,
     ComfyBackgroundProvider,
+    mask_coverage,
     plan_margins,
     probe_image_size,
 )
@@ -234,7 +235,7 @@ def test_replace_generates_everything_except_the_subject():
     provider = ComfyBackgroundProvider()
     margins = plan_margins(4000, 3000, *FRAME)
 
-    graph = provider._replace_graph("photo.jpg", margins, "an empty park", "scene_1_bg")
+    graph = provider._replace_graph("photo.jpg", margins, "an empty park", "scene_1_bg", "cat")
 
     subject_node = next(k for k, v in graph.items() if v["class_type"] == "GrowMaskWithBlur")
     encode = next(v for v in graph.values() if v["class_type"] == "VAEEncodeForInpaint")
@@ -248,20 +249,48 @@ def test_replace_generates_everything_except_the_subject():
 
 
 def test_replace_makes_the_matte_solid_before_softening_its_edge():
-    """BiRefNet returns confidences, and a hazy photo comes back around 0.5
+    """Matting returns confidences, and a hazy photo came back around 0.5
     across the whole animal — composited straight, the pet appears as a
     ghost over the generated room (measured on a real asset)."""
     provider = ComfyBackgroundProvider()
     margins = plan_margins(4000, 3000, *FRAME)
 
-    graph = provider._replace_graph("photo.jpg", margins, "an empty park", "scene_1_bg")
+    graph = provider._replace_graph("photo.jpg", margins, "an empty park", "scene_1_bg", "cat")
 
-    matte_node = next(k for k, v in graph.items() if v["class_type"] == "RemoveBackground")
+    placed_node = next(k for k, v in graph.items() if v["class_type"] == "MaskComposite")
     blur = next(v for v in graph.values() if v["class_type"] == "GrowMaskWithBlur")
     threshold = graph[blur["inputs"]["mask"][0]]
 
     assert threshold["class_type"] == "ThresholdMask"
-    assert threshold["inputs"]["mask"] == [matte_node, 0]
+    assert threshold["inputs"]["mask"] == [placed_node, 0]
+
+
+def test_replace_tells_sam3_which_animal_to_keep():
+    """The whole reason SAM3 is the default: BiRefNet segments the salient
+    object, which for a cat lying on a cat tree is the cat *and* the cat
+    tree. SAM3 is told "cat" and keeps only the cat."""
+    provider = ComfyBackgroundProvider()
+    margins = plan_margins(4000, 3000, *FRAME)
+
+    graph = provider._replace_graph("photo.jpg", margins, "an empty park", "scene_1_bg", "cat")
+    detect = next(v for v in graph.values() if v["class_type"] == "SAM3_Detect")
+
+    assert graph[detect["inputs"]["conditioning"][0]]["inputs"]["text"] == "cat"
+
+
+def test_the_birefnet_backend_still_produces_a_usable_graph(monkeypatch):
+    """Kept as an alternative for a pet SAM3 has no word for, so it has to
+    stay wired correctly rather than quietly rot."""
+    monkeypatch.setattr(config, "BACKGROUND_MATTE_BACKEND", "birefnet")
+    provider = ComfyBackgroundProvider()
+    margins = plan_margins(4000, 3000, *FRAME)
+
+    graph = provider._replace_graph("photo.jpg", margins, "an empty park", "scene_1_bg", "cat")
+
+    assert not any(v["class_type"] == "SAM3_Detect" for v in graph.values())
+    matte = next(v for v in graph.values() if v["class_type"] == "RemoveBackground")
+    scale_node = next(k for k, v in graph.items() if v["class_type"] == "ImageScale")
+    assert matte["inputs"]["image"] == [scale_node, 0]
 
 
 def test_replace_keeps_the_subject_mask_from_swallowing_its_surroundings():
@@ -272,7 +301,7 @@ def test_replace_keeps_the_subject_mask_from_swallowing_its_surroundings():
     assert config.BACKGROUND_SUBJECT_FEATHER > 0
 
 
-def test_preflight_only_demands_matting_weights_when_replacing(monkeypatch):
+def test_preflight_only_demands_a_matting_model_when_replacing(monkeypatch):
     """An extend-only run never loads the matting model, so refusing to
     start without it would block work that would have succeeded."""
     provider = ComfyBackgroundProvider()
@@ -286,6 +315,24 @@ def test_preflight_only_demands_matting_weights_when_replacing(monkeypatch):
     )
 
     provider.preflight(mode="extend")
+
+    with pytest.raises(RuntimeError, match="SAM3"):
+        provider.preflight(mode="replace")
+
+
+def test_preflight_points_at_the_model_the_chosen_backend_needs(monkeypatch):
+    """Naming the wrong missing file sends someone off to re-download
+    something they already have."""
+    monkeypatch.setattr(config, "BACKGROUND_MATTE_BACKEND", "birefnet")
+    provider = ComfyBackgroundProvider()
+    monkeypatch.setattr(provider.client, "ping", lambda: None)
+    monkeypatch.setattr(
+        provider.client,
+        "node_options",
+        lambda class_type, _: (
+            [config.BACKGROUND_MODEL_FILE] if class_type == "CheckpointLoaderSimple" else []
+        ),
+    )
 
     with pytest.raises(RuntimeError, match="background-removal model"):
         provider.preflight(mode="replace")
@@ -327,3 +374,96 @@ def test_replace_still_has_work_to_do_on_a_frame_shaped_photo(tmp_path, monkeypa
             target_height=FRAME[1],
             output_path=str(tmp_path / "out.png"),
         )
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not on PATH")
+def test_mask_coverage_reads_how_much_of_the_frame_is_masked(tmp_path):
+    def solid(colour: str) -> str:
+        path = tmp_path / f"{colour}.png"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                f"color=c={colour}:s=64x64:d=1",
+                "-frames:v",
+                "1",
+                str(path),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        return str(path)
+
+    assert mask_coverage(solid("white")) > 0.99
+    assert mask_coverage(solid("black")) < 0.01
+
+
+def test_replace_saves_the_subject_mask_it_used():
+    """Both the empty-subject check below and a human wondering why a shot
+    came out wrong need to see what was actually cut out."""
+    provider = ComfyBackgroundProvider()
+    margins = plan_margins(4000, 3000, *FRAME)
+
+    graph = provider._replace_graph("photo.jpg", margins, "an empty park", "scene_1_bg", "cat")
+
+    subject_node = next(k for k, v in graph.items() if v["class_type"] == "GrowMaskWithBlur")
+    to_image = next(v for v in graph.values() if v["class_type"] == "MaskToImage")
+    assert to_image["inputs"]["mask"] == [subject_node, 0]
+
+    saves = [v for v in graph.values() if v["class_type"] == "SaveImage"]
+    assert len(saves) == 2, "the picture and the mask it was made with"
+
+
+def test_replace_refuses_a_photo_the_subject_is_not_in(monkeypatch, tmp_path):
+    """The failure this guards against is silent: asked for a cat in a photo
+    that has none, the segmenter correctly returns nothing and the sampler
+    then repaints the whole frame — an adoption video shot with no animal in
+    it (measured: a stock photo of a person in a pet's profile)."""
+    provider = ComfyBackgroundProvider()
+    monkeypatch.setattr(provider.client, "fetch_output", lambda meta, path: path)
+    monkeypatch.setattr("providers.image.comfy_background_provider.mask_coverage", lambda path: 0.0)
+    entry = {"outputs": {"19": {"images": [{"filename": "mask.png"}]}}}
+
+    with pytest.raises(RuntimeError) as excinfo:
+        provider._require_subject_was_found(entry, "photo.jpg", str(tmp_path / "out.png"), "cat")
+
+    message = str(excinfo.value)
+    assert "photo.jpg" in message, "must name the asset a reviewer has to look at"
+    assert "cat" in message
+
+
+def test_replace_accepts_a_photo_the_subject_fills(monkeypatch, tmp_path):
+    provider = ComfyBackgroundProvider()
+    monkeypatch.setattr(provider.client, "fetch_output", lambda meta, path: path)
+    monkeypatch.setattr(
+        "providers.image.comfy_background_provider.mask_coverage", lambda path: 0.27
+    )
+    entry = {"outputs": {"19": {"images": [{"filename": "mask.png"}]}}}
+
+    provider._require_subject_was_found(entry, "photo.jpg", str(tmp_path / "out.png"), "cat")
+
+
+def test_the_subject_is_segmented_before_the_frame_padding_is_added():
+    """Measured: a clearly visible cat came back as 2.4% of the frame from
+    the scaled photo and 0.0% once the grey padding bars were around it. A
+    photo never has those bars, so the detector was being shown something
+    unlike anything it was trained on. The mask is placed onto the full
+    canvas afterwards instead."""
+    provider = ComfyBackgroundProvider()
+    margins = plan_margins(4000, 3000, *FRAME)
+
+    graph = provider._replace_graph("photo.jpg", margins, "an empty park", "scene_1_bg", "cat")
+
+    scale_node = next(k for k, v in graph.items() if v["class_type"] == "ImageScale")
+    detect = next(v for v in graph.values() if v["class_type"] == "SAM3_Detect")
+    assert detect["inputs"]["image"] == [scale_node, 0]
+
+    place = next(v for v in graph.values() if v["class_type"] == "MaskComposite")
+    canvas = graph[place["inputs"]["destination"][0]]
+    assert canvas["class_type"] == "SolidMask"
+    assert canvas["inputs"]["value"] == 0.0
+    assert (canvas["inputs"]["width"], canvas["inputs"]["height"]) == FRAME
+    assert (place["inputs"]["x"], place["inputs"]["y"]) == (margins.left, margins.top)

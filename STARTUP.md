@@ -28,7 +28,7 @@ python main.py --listen 127.0.0.1 --port 8188
 
 看到 `To see the GUI go to: http://127.0.0.1:8188` 就代表啟動成功，**這個視窗要保持開著**。`providers/video/wan_provider.py` 會直接呼叫這個伺服器的 API，沒開的話 `--video-provider wan` 會直接報錯提示你先啟動。
 
-同一台伺服器也負責 **AI 背景生成**，需要另外兩個模型檔（預設檔名見 `pipeline/config.py` 的 `BACKGROUND_*`）：`vendor/comfyui/models/checkpoints/` 放一個 SDXL checkpoint（extend 與 replace 都要），`vendor/comfyui/models/background_removal/` 放 BiRefNet 去背模型（只有 replace 要，Hugging Face 的 `Comfy-Org/BiRefNet`）。缺哪個會在開跑前就報錯，並告訴你檔案該放哪。一張 720x1280、25 步約 **8 秒**。
+同一台伺服器也負責 **AI 背景生成**，需要另外兩個模型檔（預設檔名見 `pipeline/config.py` 的 `BACKGROUND_*`）：`vendor/comfyui/models/checkpoints/` 放一個 SDXL checkpoint（extend 與 replace 都要），`vendor/comfyui/models/checkpoints/` 另外放 SAM3 分割模型（只有 replace 要，Hugging Face 的 `Comfy-Org/sam3.1`；把 `BACKGROUND_MATTE_BACKEND` 設成 `birefnet` 則改放 `Comfy-Org/BiRefNet` 到 `vendor/comfyui/models/background_removal/`）。缺哪個會在開跑前就報錯，並告訴你檔案該放哪。一張 720x1280、25 步約 **8 秒**。
 
 實測數字（RTX 5070 Ti 16GB VRAM）：一顆鏡頭（約 5 秒、20 步取樣）大概 **8 分鐘**（含模型載入），VRAM 用量約 11GB。這是 SVD/CogVideoX 之外唯一「動作品質好、速度也能接受」的選項——細節跟為什麼選這條路（而不是 diffusers 或 Wan 官方 `generate.py`）見 `pipeline/config.py` 的 `WAN_*` 註解區塊。
 

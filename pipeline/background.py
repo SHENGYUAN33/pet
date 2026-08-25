@@ -60,6 +60,7 @@ def apply_background(
     mode: BackgroundMode,
     output_path: str,
     prompt: str | None = None,
+    subject: str | None = None,
 ) -> str:
     """Give a photo its background treatment, returning the path to use in
     its place.
@@ -68,13 +69,20 @@ def apply_background(
     frame has no margin to generate, and the provider says so by handing the
     original back rather than spending a sampling pass on a copy. Callers
     should use the returned path and not assume a new file exists.
+
+    subject ("cat", "dog") says what REPLACE has to keep. EXTEND never needs
+    it — it keeps the whole photograph — so it is only forwarded there.
     """
-    call = (
-        provider.replace_background
-        if mode is BackgroundMode.REPLACE
-        else provider.outpaint_to_frame
-    )
-    return call(
+    if mode is BackgroundMode.REPLACE:
+        return provider.replace_background(
+            image_path,
+            target_width=config.BACKGROUND_WIDTH,
+            target_height=config.BACKGROUND_HEIGHT,
+            prompt=prompt,
+            output_path=output_path,
+            subject=subject,
+        )
+    return provider.outpaint_to_frame(
         image_path,
         target_width=config.BACKGROUND_WIDTH,
         target_height=config.BACKGROUND_HEIGHT,

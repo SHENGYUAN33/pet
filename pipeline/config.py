@@ -185,9 +185,47 @@ WAN_SEED = int(os.getenv("WAN_SEED", "47"))
 BACKGROUND_COMFYUI_URL = os.getenv("BACKGROUND_COMFYUI_URL", WAN_COMFYUI_URL)
 # Stable Diffusion XL checkpoint, in vendor/comfyui/models/checkpoints/.
 BACKGROUND_MODEL_FILE = os.getenv("BACKGROUND_MODEL_FILE", "sd_xl_base_1.0.safetensors")
-# BiRefNet matting weights, in vendor/comfyui/models/background_removal/.
-# Only "replace" needs it; ComfyUI supports BiRefNet natively, so this is a
-# core node rather than another custom node pack.
+# How "replace" decides which pixels are the pet. Only that treatment needs
+# it; both options are core ComfyUI nodes rather than another custom pack.
+#
+#   sam3      Text-prompted segmentation: it is told to find "cat", and finds
+#             the cat. Default because the alternative gets this wrong in a
+#             way that shows: BiRefNet segments the salient *object*, which
+#             for a cat lying on a cat tree is the cat AND the cat tree, so
+#             the furniture travels to the new setting with it (measured on a
+#             real asset — SAM3 cut the same shelf bars out correctly).
+#   birefnet  Salient-object matting, no prompt. Smaller (444MB vs 1.7GB) and
+#             needs no word for the species, so it stays available for a pet
+#             SAM3's vocabulary would not have a name for.
+BACKGROUND_MATTE_BACKEND = os.getenv("BACKGROUND_MATTE_BACKEND", "sam3")
+# SAM3 checkpoint, in vendor/comfyui/models/checkpoints/ (Comfy-Org/sam3.1).
+BACKGROUND_SAM3_MODEL_FILE = os.getenv(
+    "BACKGROUND_SAM3_MODEL_FILE", "sam3.1_multiplex_fp16.safetensors"
+)
+BACKGROUND_SAM3_THRESHOLD = float(os.getenv("BACKGROUND_SAM3_THRESHOLD", "0.5"))
+BACKGROUND_SAM3_REFINE_ITERATIONS = int(os.getenv("BACKGROUND_SAM3_REFINE_ITERATIONS", "2"))
+# What SAM3 is told to look for when the caller doesn't say. Callers should
+# say: the pipeline knows the pet's species and the provider does not, so
+# pipeline/rendering.py passes it through. This is the honest fallback for a
+# profile whose species field isn't a word SAM3 can act on.
+BACKGROUND_SUBJECT_FALLBACK = os.getenv("BACKGROUND_SUBJECT_FALLBACK", "pet")
+# Smallest share of the frame the subject may occupy before "replace" refuses
+# the shot. Asked for a cat in a photo that has none, SAM3 correctly returns
+# nothing — and the graph then happily regenerates the entire frame, giving
+# an adoption video a shot of an empty park with no animal in it (measured:
+# a stock photo of a person had been added to a pet's profile). Silence is
+# the wrong answer there; the run stops and says which asset it was, which
+# also happens to be how a reviewer finds out an asset isn't of this pet.
+#
+# Deliberately tiny, because this separates "found nothing" from "found
+# something", not "good shot" from "bad shot". A cat far away in a cluttered
+# room measured 0.4% here — a poor shot to replace the background of, but it
+# really is the cat, and refusing it would be the code overruling a judgement
+# that belongs to the reviewer looking at the result. Under 0.2% of a
+# 720x1280 frame is under two thousand pixels: a speck, not a pet.
+BACKGROUND_MIN_SUBJECT_COVERAGE = float(os.getenv("BACKGROUND_MIN_SUBJECT_COVERAGE", "0.002"))
+# BiRefNet matting weights, in vendor/comfyui/models/background_removal/
+# (Comfy-Org/BiRefNet). Used only when BACKGROUND_MATTE_BACKEND is birefnet.
 BACKGROUND_MATTE_MODEL_FILE = os.getenv("BACKGROUND_MATTE_MODEL_FILE", "birefnet.safetensors")
 # Generation frame: exactly 9:16 so the result drops into the output frame
 # with nothing left to pad, and divisible by 8 for the VAE. Smaller than the
@@ -215,11 +253,11 @@ BACKGROUND_GROW_MASK = int(os.getenv("BACKGROUND_GROW_MASK", "16"))
 # GROW_MASK above still applies to the sampler's side, so it repaints
 # slightly under the subject's edge rather than leaving that halo behind.
 BACKGROUND_SUBJECT_FEATHER = float(os.getenv("BACKGROUND_SUBJECT_FEATHER", "8"))
-# Confidence above which a pixel counts as subject. BiRefNet returns
-# confidences rather than a binary matte, and on a hazy photo the whole
-# animal can come back near 0.5 — composited as-is that half-blends the pet
-# into the generated scene and it appears as a ghost, so the matte is made
-# solid before the edge is softened again.
+# Confidence above which a pixel counts as subject. Matting returns
+# confidences rather than a binary mask, and on a hazy photo BiRefNet
+# returned the whole animal near 0.5 — composited as-is that half-blends the
+# pet into the generated scene and it appears as a ghost, so the matte is
+# made solid before the edge is softened again.
 BACKGROUND_MATTE_THRESHOLD = float(os.getenv("BACKGROUND_MATTE_THRESHOLD", "0.5"))
 BACKGROUND_SUBJECT_GROW = int(os.getenv("BACKGROUND_SUBJECT_GROW", "0"))
 # English, and not by preference: SDXL's text encoders are CLIP, trained on

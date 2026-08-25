@@ -278,6 +278,10 @@ def render_script(
                                 mode=background_mode,
                                 output_path=str(bg_path),
                                 prompt=background_prompt,
+                                # The profile knows what animal this is and
+                                # the provider does not; REPLACE has to be
+                                # told what to keep in the frame.
+                                subject=profile.species,
                             )
                         )
                     if animated:
