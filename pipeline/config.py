@@ -33,6 +33,14 @@ MAX_SCENES = int(os.getenv("MAX_SCENES", "7"))
 MIN_SCENE_DURATION = int(os.getenv("MIN_SCENE_DURATION", "3"))
 MAX_SCENE_DURATION = int(os.getenv("MAX_SCENE_DURATION", "6"))
 
+# How a source that isn't already 9:16 is put into the output frame.
+# "blur" fits the whole picture and fills the rest with a blurred copy of
+# itself; "pad" uses flat black; "crop" scales up and cuts away whatever
+# doesn't fit — which costs a 4:3 photo 59% of its width, usually including
+# part of the pet, and is why it is no longer the default.
+SCENE_FIT_MODE = os.getenv("SCENE_FIT_MODE", "blur")
+SCENE_FIT_BLUR = int(os.getenv("SCENE_FIT_BLUR", "24"))
+
 # Closing recap of the assets the script had no room for. A 30s video is 5-7
 # shots showing one asset each, so a pet with thirteen photos leaves six of
 # them out; rather than lengthening the story shots (which are paced to one

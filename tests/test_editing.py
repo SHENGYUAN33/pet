@@ -5,11 +5,14 @@ import subprocess
 
 import pytest
 
+from pipeline import config
 from pipeline.audio_mix import mix_narration_with_music
 from pipeline.editing import (
     FRAME_HEIGHT,
     FRAME_RATE,
     FRAME_WIDTH,
+    PHOTO_SUPERSAMPLE,
+    _fit_to_frame,
     build_scene_clip,
     concat_audio,
     concat_video_only,
@@ -225,3 +228,122 @@ def test_build_scene_clip_survives_filtergraph_metacharacters_in_subtitle(sample
     )
 
     assert abs(_duration(out) - 2.0) < DURATION_TOLERANCE
+
+
+def _landscape_photo_with_marked_edges(tmp_path):
+    """A 4:3 source whose left and right edges are solid red and blue.
+
+    Those edges are exactly what filling a 9:16 frame by cropping throws
+    away, so their presence in the output is the check that the picture
+    survived whole.
+    """
+    photo = tmp_path / "landscape.png"
+    _run(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=gray:s=1600x1200:d=1",
+            "-vf",
+            (
+                "drawbox=x=0:y=0:w=200:h=1200:color=red@1:t=fill,"
+                "drawbox=x=1400:y=0:w=200:h=1200:color=blue@1:t=fill"
+            ),
+            "-frames:v",
+            "1",
+            str(photo),
+        ]
+    )
+    return photo
+
+
+def _edge_colors(path) -> tuple[bytes, bytes]:
+    """(left, right) colour at the vertical middle of the frame, each
+    averaged to a single RGB pixel."""
+    colors = []
+    for x in (0, FRAME_WIDTH - 20):
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-i",
+                str(path),
+                "-frames:v",
+                "1",
+                "-vf",
+                f"crop=20:40:{x}:{FRAME_HEIGHT // 2},scale=1:1,format=rgb24",
+                "-f",
+                "rawvideo",
+                "-",
+            ],
+            check=True,
+            capture_output=True,
+        )
+        colors.append(result.stdout[:3])
+    return colors[0], colors[1]
+
+
+@pytest.mark.parametrize("mode", ["blur", "pad"])
+def test_a_landscape_source_keeps_the_edges_cropping_would_cut(tmp_path, monkeypatch, mode):
+    """A 4:3 photo has to reach 2640px wide to cover a 1080x1920 frame, so
+    filling by cropping keeps 41% of it — usually losing half the pet. Both
+    fitting modes put the whole picture in the frame, so its outer edges are
+    still there."""
+    photo = _landscape_photo_with_marked_edges(tmp_path)
+
+    monkeypatch.setattr(config, "SCENE_FIT_MODE", mode)
+    fitted = tmp_path / f"{mode}.mp4"
+    build_scene_clip(
+        visual_path=str(photo), duration=1.0, subtitle_text="測試", output_path=str(fitted)
+    )
+
+    assert _probe(fitted, "stream=width,height").split() == [str(FRAME_WIDTH), str(FRAME_HEIGHT)]
+
+    left, right = _edge_colors(fitted)
+    assert left[0] > left[2], f"left edge should still be the red band, got {tuple(left)}"
+    assert right[2] > right[0], f"right edge should still be the blue band, got {tuple(right)}"
+
+    monkeypatch.setattr(config, "SCENE_FIT_MODE", "crop")
+    cropped = tmp_path / "cropped.mp4"
+    build_scene_clip(
+        visual_path=str(photo), duration=1.0, subtitle_text="測試", output_path=str(cropped)
+    )
+
+    crop_left, crop_right = _edge_colors(cropped)
+    assert crop_left[0] <= crop_left[2] and crop_right[2] <= crop_right[0], (
+        "cropping to fill should have cut both coloured edges away — "
+        "if it didn't, this test no longer proves anything"
+    )
+
+
+def test_fit_modes_produce_the_filter_each_one_promises():
+    """The three modes differ in exactly one thing: what happens to the space
+    a non-9:16 source doesn't cover."""
+    with_blur = _fit_to_frame()
+    assert "gblur" in with_blur and "overlay" in with_blur
+
+    import pipeline.config as cfg
+
+    original = cfg.SCENE_FIT_MODE
+    try:
+        cfg.SCENE_FIT_MODE = "pad"
+        assert "pad=" in _fit_to_frame()
+        assert "gblur" not in _fit_to_frame()
+
+        cfg.SCENE_FIT_MODE = "crop"
+        cropping = _fit_to_frame()
+        assert "crop=" in cropping
+        assert "overlay" not in cropping
+    finally:
+        cfg.SCENE_FIT_MODE = original
+
+
+def test_ken_burns_samples_from_an_oversized_frame():
+    """Zooming into a picture already at output resolution is what makes a
+    photo scene look soft."""
+    assert PHOTO_SUPERSAMPLE > 1
+    oversized = _fit_to_frame(PHOTO_SUPERSAMPLE)
+    assert str(FRAME_WIDTH * PHOTO_SUPERSAMPLE) in oversized

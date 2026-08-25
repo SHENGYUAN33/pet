@@ -17,6 +17,11 @@ FRAME_HEIGHT = 1920
 # corrupts the concatenated timestamps, silently truncating the final duration.
 FRAME_RATE = 25
 
+# The Ken Burns move zooms into the fitted frame, so that frame is built at
+# this multiple of the output size — zooming into a 1080x1920 picture that is
+# already at output resolution is what makes a photo scene look soft.
+PHOTO_SUPERSAMPLE = 2
+
 
 def _write_subtitle_file(text: str, output_path: str) -> Path:
     """Put the subtitle in a sidecar file for drawtext's textfile= option
@@ -42,6 +47,45 @@ def _escape_filter_path(path: str) -> str:
     return path.replace("\\", "/").replace(":", "\\:")
 
 
+def _fit_to_frame(multiplier: int = 1) -> str:
+    """Filter chain putting any source into the 9:16 output frame.
+
+    Filling the frame by scaling up and cropping loses most of a landscape
+    source: a 4:3 photo has to reach 2640px wide before it covers 1080x1920,
+    so cropping back to 1080 keeps 41% of the picture and throws the rest
+    away — including, often, half the pet. So the picture is fitted whole
+    and the leftover space is filled with a blurred, zoomed copy of itself
+    rather than by cutting into it (config.SCENE_FIT_MODE picks the
+    behaviour; "pad" uses flat black instead, "crop" restores the old
+    fill-and-cut).
+
+    Portrait sources already match the frame and come out unchanged either
+    way — this only decides what happens to the ones that don't.
+
+    multiplier builds the frame oversized: the Ken Burns move samples its
+    zoom from this, and zooming into a picture already reduced to output
+    resolution is what makes it soft.
+    """
+    width, height = FRAME_WIDTH * multiplier, FRAME_HEIGHT * multiplier
+    cover = f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}"
+    if config.SCENE_FIT_MODE == "crop":
+        return cover
+
+    contain = f"scale={width}:{height}:force_original_aspect_ratio=decrease"
+    if config.SCENE_FIT_MODE == "pad":
+        return f"{contain},pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black"
+
+    # split feeds the same frame to both branches: one becomes the blurred
+    # backdrop (cover-cropped, so it always fills), the other the untouched
+    # picture laid over it.
+    return (
+        f"split=2[fitbg][fitfg];"
+        f"[fitbg]{cover},gblur=sigma={config.SCENE_FIT_BLUR * multiplier}[fitbgb];"
+        f"[fitfg]{contain}[fitfgs];"
+        f"[fitbgb][fitfgs]overlay=(W-w)/2:(H-h)/2"
+    )
+
+
 def build_scene_clip(
     *,
     visual_path: str,
@@ -59,16 +103,12 @@ def build_scene_clip(
     if is_photo:
         frames = max(int(duration * FRAME_RATE), 1)
         video_filter = (
-            f"scale={FRAME_WIDTH * 2}:-1,"
+            f"{_fit_to_frame(PHOTO_SUPERSAMPLE)},"
             f"zoompan=z='min(zoom+0.0015,1.2)':d={frames}:s={FRAME_WIDTH}x{FRAME_HEIGHT}:fps={FRAME_RATE},"
         )
         video_input = ["-loop", "1", "-i", visual_path]
     else:
-        video_filter = (
-            f"scale={FRAME_WIDTH}:{FRAME_HEIGHT}:force_original_aspect_ratio=increase,"
-            f"crop={FRAME_WIDTH}:{FRAME_HEIGHT},"
-            f"fps={FRAME_RATE},"
-        )
+        video_filter = f"{_fit_to_frame()},fps={FRAME_RATE},"
         # Real clips are often shorter than the scene's assigned duration;
         # loop so -t below can always fill the full scene length.
         video_input = ["-stream_loop", "-1", "-i", visual_path]
