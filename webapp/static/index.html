@@ -1290,9 +1290,7 @@ function renderJobs() {
 
 async function cleanupJob(jobId) {
   const ok = confirm(
-    "刪除 Job " + jobId + " 的影片與鏡頭檔案？
-
-" +
+    "刪除 Job " + jobId + " 的影片與鏡頭檔案？\n\n" +
       "生成紀錄（腳本、用了哪個模型與 prompt、QA 結果）會保留，之後仍可以從這個版本重生鏡頭，" +
       "但影片本身無法再播放，也無法復原。"
   );
