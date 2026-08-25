@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 
 from pipeline import config
+from pipeline.background import BackgroundMode
 from pipeline.fact_check import find_missing_disclosures
 from pipeline.models import JobStatus
 from pipeline.montage import append_recap_scene
@@ -36,9 +37,10 @@ def generate_video(
     animate_scenes: set[int] | None = None,
     video_provider: str = "svd",
     animate_prompt: str | None = None,
-    outpaint_scenes: set[int] | None = None,
+    background_scenes: set[int] | None = None,
+    background_mode: BackgroundMode = BackgroundMode.EXTEND,
     image_provider: str = "comfy",
-    outpaint_prompt: str | None = None,
+    background_prompt: str | None = None,
     recap_unused_assets: bool = False,
     on_progress: ProgressCallback = noop,
 ) -> tuple[str, int]:
@@ -47,9 +49,10 @@ def generate_video(
     before a TTS voice reference is available. music_track=None skips
     background music (narration/silence only). Returns (output_path, job_id)
     — job_id can later be passed to pipeline.regen.regenerate_scene().
-    outpaint_scenes lists the photo scenes whose empty frame margin should
-    be filled with generated surroundings instead of blurred bars (see
-    pipeline/outpaint.py), described by outpaint_prompt.
+    background_scenes lists the photo scenes that get a generated background
+    — the empty frame margin filled in, or the whole setting replaced,
+    depending on background_mode (see pipeline/background.py) — described
+    by background_prompt.
     recap_unused_assets appends a closing quick-cut of the assets the
     script had no room for (see pipeline/montage.py) — a 30-second video is
     5-7 shots, so a pet with thirteen photos otherwise leaves six of them
@@ -81,9 +84,10 @@ def generate_video(
         animate_scenes=animate_scenes,
         video_provider=video_provider,
         animate_prompt=animate_prompt,
-        outpaint_scenes=outpaint_scenes,
+        background_scenes=background_scenes,
+        background_mode=background_mode.value,
         image_provider=image_provider,
-        outpaint_prompt=outpaint_prompt,
+        background_prompt=background_prompt,
     )
     try:
         final_path = _run_generation(
@@ -96,9 +100,10 @@ def generate_video(
             animate_scenes=animate_scenes,
             video_provider=video_provider,
             animate_prompt=animate_prompt,
-            outpaint_scenes=outpaint_scenes,
+            background_scenes=background_scenes,
+            background_mode=background_mode,
             image_provider=image_provider,
-            outpaint_prompt=outpaint_prompt,
+            background_prompt=background_prompt,
             recap_unused_assets=recap_unused_assets,
             on_progress=on_progress,
         )
@@ -120,9 +125,10 @@ def _run_generation(
     animate_scenes: set[int] | None,
     video_provider: str,
     animate_prompt: str | None,
-    outpaint_scenes: set[int] | None,
+    background_scenes: set[int] | None,
+    background_mode: BackgroundMode,
     image_provider: str,
-    outpaint_prompt: str | None,
+    background_prompt: str | None,
     recap_unused_assets: bool,
     on_progress: ProgressCallback,
 ) -> str:
@@ -196,9 +202,10 @@ def _run_generation(
         animate_scenes=animate_scenes,
         video_provider=video_provider,
         animate_prompt=animate_prompt,
-        outpaint_scenes=outpaint_scenes,
+        background_scenes=background_scenes,
+        background_mode=background_mode,
         image_provider=image_provider,
-        outpaint_prompt=outpaint_prompt,
+        background_prompt=background_prompt,
         on_progress=scaled(on_progress, 0.35, 0.98),
         scene_tracker=DatabaseSceneTracker(job_id),
     )
@@ -257,9 +264,10 @@ def resume_generation_job(
             animate_scenes=set(job["animate_scenes"]) if job["animate_scenes"] else None,
             video_provider=job["video_provider"] or "svd",
             animate_prompt=job["animate_prompt"],
-            outpaint_scenes=set(job["outpaint_scenes"]) if job["outpaint_scenes"] else None,
+            background_scenes=set(job["background_scenes"]) if job["background_scenes"] else None,
+            background_mode=BackgroundMode(job["background_mode"] or BackgroundMode.EXTEND),
             image_provider=job["image_provider"] or "comfy",
-            outpaint_prompt=job["outpaint_prompt"],
+            background_prompt=job["background_prompt"],
             on_progress=scaled(on_progress, 0.05, 0.98),
             scene_tracker=DatabaseSceneTracker(job_id, resume=True),
         )
@@ -304,24 +312,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="Which open-source I2V model to use with --animate-scenes (default: svd)",
     )
     parser.add_argument(
-        "--outpaint-scenes",
+        "--background-scenes",
         default=None,
-        help="Comma-separated scene ids whose photo should be extended to the "
-        "full 9:16 frame with AI-generated surroundings instead of blurred bars "
+        help="Comma-separated scene ids whose photo gets a generated background "
         "(only applies to photo-sourced scenes), e.g. 1,3",
     )
     parser.add_argument(
-        "--outpaint-prompt",
+        "--background-mode",
+        default="extend",
+        choices=["extend", "replace"],
+        help="extend: keep the photo's real background and generate only the empty "
+        "frame margin (default). replace: cut the pet out and generate an entirely "
+        "new setting — the shot then carries the AI-generation disclosure.",
+    )
+    parser.add_argument(
+        "--background-prompt",
         default=None,
-        help="What the generated surroundings should be, in ENGLISH and describing "
-        "the whole picture (SDXL's text encoder does not understand Chinese), e.g. "
-        "'a grey cat resting in a cosy living room, warm afternoon light, realistic photograph'. Applies to every scene in --outpaint-scenes.",
+        help="What to generate, in ENGLISH (SDXL's text encoder does not understand "
+        "Chinese). For --background-mode extend describe the whole picture, pet "
+        "included, e.g. 'a grey cat resting in a cosy living room, warm afternoon light, realistic photograph'. For replace describe "
+        "the setting ONLY — naming an animal there paints a second one — e.g. "
+        "'green grass in a sunny park, blurred trees behind, bright daylight, realistic photograph'. Applies to every scene in --background-scenes.",
     )
     parser.add_argument(
         "--image-provider",
         default="comfy",
         choices=["comfy"],
-        help="Which image provider fills the margin for --outpaint-scenes (default: comfy)",
+        help="Which image provider generates backgrounds for --background-scenes (default: comfy)",
     )
     parser.add_argument(
         "--recap-unused-assets",
@@ -339,7 +356,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def parse_scene_ids(raw: str | None) -> set[int] | None:
-    """Read a --animate-scenes / --outpaint-scenes value ("2,4") into the
+    """Read a --animate-scenes / --background-scenes value ("2,4") into the
     set render_script expects, or None when the flag was not given."""
     return {int(part) for part in raw.split(",")} if raw else None
 
@@ -348,7 +365,7 @@ def main() -> None:
     args = build_parser().parse_args()
 
     animate_scenes = parse_scene_ids(args.animate_scenes)
-    outpaint_scenes = parse_scene_ids(args.outpaint_scenes)
+    background_scenes = parse_scene_ids(args.background_scenes)
 
     output_path, job_id = generate_video(
         pet_id=args.pet_id,
@@ -359,9 +376,10 @@ def main() -> None:
         animate_scenes=animate_scenes,
         video_provider=args.video_provider,
         animate_prompt=args.animate_prompt,
-        outpaint_scenes=outpaint_scenes,
+        background_scenes=background_scenes,
+        background_mode=BackgroundMode(args.background_mode),
         image_provider=args.image_provider,
-        outpaint_prompt=args.outpaint_prompt,
+        background_prompt=args.background_prompt,
         recap_unused_assets=args.recap_unused_assets,
     )
     print(f"Job id: {job_id}")

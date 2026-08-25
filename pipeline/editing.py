@@ -23,8 +23,8 @@ FRAME_RATE = 25
 PHOTO_SUPERSAMPLE = 2
 
 
-def _write_subtitle_file(text: str, output_path: str) -> Path:
-    """Put the subtitle in a sidecar file for drawtext's textfile= option
+def _write_text_file(text: str, output_path: str, *, suffix: str) -> Path:
+    """Put burned-in text in a sidecar file for drawtext's textfile= option
     instead of inlining it in the filtergraph.
 
     Inlining meant escaping the same string for three nested parsers
@@ -34,8 +34,9 @@ def _write_subtitle_file(text: str, output_path: str) -> Path:
     kitty!") read as a filter separator and FFmpeg failed with "No such
     filter". With textfile= only the path is part of the filter string, and
     subtitle text — which is model-generated and reviewer-editable, i.e.
-    never under our control — needs no escaping at all."""
-    path = Path(output_path).with_suffix(".subtitle.txt")
+    never under our control — needs no escaping at all. The same applies to
+    the AI-generation disclosure, which is reviewer-configurable."""
+    path = Path(output_path).with_suffix(suffix)
     path.write_text(text, encoding="utf-8")
     return path
 
@@ -92,12 +93,21 @@ def build_scene_clip(
     duration: float,
     subtitle_text: str,
     output_path: str,
+    disclosure_text: str | None = None,
 ) -> str:
     """Render one scene's video (no audio): real video or photo (Ken Burns
     zoom) with burned subtitle. Real-footage-first per
     docs/architecture.md §5 strategy A — no AI video generation in PoC.
     Audio (narration + music) is assembled separately and muxed in at the
-    end — see concat_video_only / mux_video_audio and pipeline/audio_mix.py."""
+    end — see concat_video_only / mux_video_audio and pipeline/audio_mix.py.
+
+    disclosure_text is burned into the top of the frame for shots whose
+    setting was generated rather than photographed (docs/architecture.md §5
+    strategy C). It is deliberately a parameter rather than something this
+    function decides: only the caller knows how a given shot was made, and a
+    label that appeared on shots that didn't need one would stop meaning
+    anything. Smaller and lighter than the subtitle — it has to be legible
+    and unmissable, not compete with the message."""
     is_photo = Path(visual_path).suffix.lower() in PHOTO_EXTENSIONS
 
     if is_photo:
@@ -113,7 +123,7 @@ def build_scene_clip(
         # loop so -t below can always fill the full scene length.
         video_input = ["-stream_loop", "-1", "-i", visual_path]
 
-    subtitle_file = _write_subtitle_file(subtitle_text, output_path)
+    subtitle_file = _write_text_file(subtitle_text, output_path, suffix=".subtitle.txt")
     drawtext = (
         f"drawtext=fontfile='{_escape_filter_path(config.DRAWTEXT_FONT_FILE)}':"
         f"textfile='{_escape_filter_path(str(subtitle_file))}':"
@@ -123,6 +133,16 @@ def build_scene_clip(
         "fontcolor=white:fontsize=54:box=1:boxcolor=black@0.5:boxborderw=12:"
         "x=(w-text_w)/2:y=h-260"
     )
+
+    if disclosure_text:
+        disclosure_file = _write_text_file(disclosure_text, output_path, suffix=".disclosure.txt")
+        drawtext += (
+            f",drawtext=fontfile='{_escape_filter_path(config.DRAWTEXT_FONT_FILE)}':"
+            f"textfile='{_escape_filter_path(str(disclosure_file))}':"
+            "expansion=none:"
+            "fontcolor=white:fontsize=32:box=1:boxcolor=black@0.45:boxborderw=8:"
+            "x=(w-text_w)/2:y=80"
+        )
 
     cmd = [
         "ffmpeg",

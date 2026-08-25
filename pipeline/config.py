@@ -164,44 +164,64 @@ WAN_SHIFT = float(os.getenv("WAN_SHIFT", "5.0"))
 # different take of the same photo when a result comes out ugly.
 WAN_SEED = int(os.getenv("WAN_SEED", "47"))
 
-# --- 背景延伸 / Outpainting (docs/architecture.md §5 strategy C) ---------------
-# A photo that isn't already 9:16 leaves empty space in the output frame, and
-# SCENE_FIT_MODE decides what fills it: a blurred copy of the photo, flat
-# black, or a crop that throws away most of a landscape shot. None of those
-# add anything — the result reads as "a photo with bars", which is the main
-# reason the finished video looks like a slideshow rather than a scene.
+
+# --- 背景處理 / Generated backgrounds (docs/architecture.md §5) ---------------
+# Two treatments for one photo scene, both run by the same provider
+# (providers/image/comfy_background_provider.py) and picked per run:
 #
-# Outpainting fills that space with generated surroundings instead: the pet's
-# own pixels are never touched (only the empty margin is generated), so this
-# carries none of the identity risk of regenerating the subject, and it needs
-# no matting step. That is why it comes before background *replacement* in
-# the roadmap, not after.
+#   extend   Keep the photo's real background and generate only the empty
+#            margin the 9:16 frame leaves around it. Nothing the camera saw
+#            is replaced, so this is strategy A with the bars filled in —
+#            the honest default, and it needs no matting.
+#   replace  Cut the pet out and generate an entirely new setting behind it.
+#            The pet is still the photographed animal, but the place is
+#            invented, which makes it strategy C: it has to carry the
+#            AI-generation disclosure below, and it must never imply a fact
+#            about the pet (see BACKGROUND_NEGATIVE_PROMPT).
 #
-# Runs on the same locally-hosted ComfyUI server as Wan2.2 (see WAN_* above),
-# using core nodes only (ImagePadForOutpaint + VAEEncodeForInpaint + KSampler)
-# so no extra custom node is needed — just a checkpoint in
-# vendor/comfyui/models/checkpoints/.
-OUTPAINT_COMFYUI_URL = os.getenv("OUTPAINT_COMFYUI_URL", WAN_COMFYUI_URL)
-OUTPAINT_MODEL_FILE = os.getenv("OUTPAINT_MODEL_FILE", "sd_xl_base_1.0.safetensors")
+# In both cases the subject's own pixels are composited back over the
+# generated canvas at the end, so no treatment ever redraws the animal.
+# Runs on the same locally-hosted ComfyUI server as Wan2.2 (see WAN_* above).
+BACKGROUND_COMFYUI_URL = os.getenv("BACKGROUND_COMFYUI_URL", WAN_COMFYUI_URL)
+# Stable Diffusion XL checkpoint, in vendor/comfyui/models/checkpoints/.
+BACKGROUND_MODEL_FILE = os.getenv("BACKGROUND_MODEL_FILE", "sd_xl_base_1.0.safetensors")
+# BiRefNet matting weights, in vendor/comfyui/models/background_removal/.
+# Only "replace" needs it; ComfyUI supports BiRefNet natively, so this is a
+# core node rather than another custom node pack.
+BACKGROUND_MATTE_MODEL_FILE = os.getenv("BACKGROUND_MATTE_MODEL_FILE", "birefnet.safetensors")
 # Generation frame: exactly 9:16 so the result drops into the output frame
 # with nothing left to pad, and divisible by 8 for the VAE. Smaller than the
 # 1080x1920 delivery size on purpose — SDXL is trained around 1024x1024, and
 # pipeline/editing.py scales the result up anyway.
-OUTPAINT_WIDTH = int(os.getenv("OUTPAINT_WIDTH", "720"))
-OUTPAINT_HEIGHT = int(os.getenv("OUTPAINT_HEIGHT", "1280"))
-OUTPAINT_STEPS = int(os.getenv("OUTPAINT_STEPS", "25"))
-OUTPAINT_CFG = float(os.getenv("OUTPAINT_CFG", "7.0"))
-OUTPAINT_SAMPLER = os.getenv("OUTPAINT_SAMPLER", "euler")
-OUTPAINT_SCHEDULER = os.getenv("OUTPAINT_SCHEDULER", "karras")
+BACKGROUND_WIDTH = int(os.getenv("BACKGROUND_WIDTH", "720"))
+BACKGROUND_HEIGHT = int(os.getenv("BACKGROUND_HEIGHT", "1280"))
+BACKGROUND_STEPS = int(os.getenv("BACKGROUND_STEPS", "25"))
+BACKGROUND_CFG = float(os.getenv("BACKGROUND_CFG", "7.0"))
+BACKGROUND_SAMPLER = os.getenv("BACKGROUND_SAMPLER", "euler")
+BACKGROUND_SCHEDULER = os.getenv("BACKGROUND_SCHEDULER", "karras")
 # Fixed by default so re-running a scene reproduces the same surroundings;
 # change it to draw a different take of the same photo.
-OUTPAINT_SEED = int(os.getenv("OUTPAINT_SEED", "47"))
-# How far the generated margin blends into the photo. Feathering softens the
-# seam; grow_mask_by lets the sampler repaint a little of the photo's own
-# edge so the two don't meet on a hard line. Both cost some of the original
-# edge pixels, so they stay small.
-OUTPAINT_FEATHER = int(os.getenv("OUTPAINT_FEATHER", "40"))
-OUTPAINT_GROW_MASK = int(os.getenv("OUTPAINT_GROW_MASK", "16"))
+BACKGROUND_SEED = int(os.getenv("BACKGROUND_SEED", "47"))
+# "extend" seam: FEATHER softens the mask edge where the margin meets the
+# photo, GROW_MASK lets the sampler repaint a little of the photo's own edge
+# so the two don't meet on a hard line. Both cost some of the original edge
+# pixels, so they stay small.
+BACKGROUND_FEATHER = int(os.getenv("BACKGROUND_FEATHER", "40"))
+BACKGROUND_GROW_MASK = int(os.getenv("BACKGROUND_GROW_MASK", "16"))
+# "replace" seam, around the cut-out subject. The blur is what stops the pet
+# reading as a sticker pasted on a picture; the grow is deliberately 0 —
+# expanding the subject mask keeps a halo of the *old* background around the
+# animal, which is the most obvious tell that a background was swapped.
+# GROW_MASK above still applies to the sampler's side, so it repaints
+# slightly under the subject's edge rather than leaving that halo behind.
+BACKGROUND_SUBJECT_FEATHER = float(os.getenv("BACKGROUND_SUBJECT_FEATHER", "8"))
+# Confidence above which a pixel counts as subject. BiRefNet returns
+# confidences rather than a binary matte, and on a hazy photo the whole
+# animal can come back near 0.5 — composited as-is that half-blends the pet
+# into the generated scene and it appears as a ghost, so the matte is made
+# solid before the edge is softened again.
+BACKGROUND_MATTE_THRESHOLD = float(os.getenv("BACKGROUND_MATTE_THRESHOLD", "0.5"))
+BACKGROUND_SUBJECT_GROW = int(os.getenv("BACKGROUND_SUBJECT_GROW", "0"))
 # English, and not by preference: SDXL's text encoders are CLIP, trained on
 # English captions only — a Chinese prompt is not translated, it is embedded
 # as noise, and the model falls back to inventing whatever it likes (measured
@@ -209,25 +229,32 @@ OUTPAINT_GROW_MASK = int(os.getenv("OUTPAINT_GROW_MASK", "16"))
 # above the cat). Until something translates the reviewer's wording on the
 # way in, every prompt reaching this provider has to be written in English.
 #
-# It should describe the *whole* picture, not just the margin. The masked
+# It should describe the *whole* picture, not just the background. The masked
 # area is generated from the prompt alone, so a prompt that doesn't mention
 # what is already in the photo produces surroundings that belong to a
 # different scene.
-OUTPAINT_DEFAULT_PROMPT = os.getenv(
-    "OUTPAINT_DEFAULT_PROMPT",
+BACKGROUND_DEFAULT_PROMPT = os.getenv(
+    "BACKGROUND_DEFAULT_PROMPT",
     "a pet photographed indoors, warm natural home interior, soft afternoon "
     "light, shallow depth of field, realistic photograph",
 )
-# The generated margin must stay scenery. Left to itself the model reads a
+# The generated area must stay scenery. Left to itself the model reads a
 # photo of a pet as "this picture contains a pet" and paints another one into
-# the empty space — a second cat that does not exist, which is a factual
-# problem, not just an ugly one (CLAUDE.md: Pet Profile 是唯一事實來源). The
-# same goes for people: an invented human implies a home situation nobody
+# the space it is given — a second cat that does not exist, which is a
+# factual problem, not just an ugly one (CLAUDE.md: Pet Profile 是唯一事實來源).
+# The same goes for people: an invented human implies a home situation nobody
 # promised. Text is excluded because subtitles are burned in by the editing
 # stage, never generated inside the picture.
-OUTPAINT_NEGATIVE_PROMPT = os.getenv(
-    "OUTPAINT_NEGATIVE_PROMPT",
+BACKGROUND_NEGATIVE_PROMPT = os.getenv(
+    "BACKGROUND_NEGATIVE_PROMPT",
     "another animal, second pet, extra cat, extra dog, person, human, hands, face, "
     "text, watermark, signature, logo, frame, border, blurry, distorted, lowres, "
     "duplicate, cropped",
 )
+# Burned onto any shot whose setting was invented rather than photographed
+# (mode "replace"). Required by docs/architecture.md §5 strategy C: a viewer
+# must not be able to mistake a generated place for where this animal
+# actually is. "extend" never carries it — nothing the camera saw is replaced
+# there, and labelling a filled margin would dilute the label where it
+# matters.
+BACKGROUND_DISCLOSURE_TEXT = os.getenv("BACKGROUND_DISCLOSURE_TEXT", "部分畫面由 AI 創意生成")

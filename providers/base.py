@@ -62,25 +62,38 @@ class VideoGenerationProvider(ABC):
 class ImageEditingProvider(ABC):
     """Generative editing of a still image, ahead of the video stages.
 
-    Today that means one operation: growing a photo out to the delivery
-    frame's aspect ratio with generated surroundings, instead of filling the
-    leftover space with blur or black (pipeline/editing.py's SCENE_FIT_MODE).
-    The photo's own pixels are carried through untouched — the pet is never
-    regenerated — so this stays compatible with the identity-consistency
-    requirement that rules out redrawing the subject.
+    Two operations, and the difference between them is a product decision,
+    not a technical one:
+
+    outpaint_to_frame keeps the photograph's real background and generates
+    only the empty margin the delivery frame leaves around it — nothing the
+    camera saw is replaced. replace_background generates a whole new setting
+    behind the subject, so the animal is real but the place is invented, and
+    a shot made that way has to be disclosed as partly AI-generated
+    (docs/architecture.md §5 strategy C).
+
+    What both must guarantee: the subject's own pixels come through
+    untouched. Implementations that sample the whole canvas have to put the
+    original pixels back before returning, or the identity-consistency
+    requirement that rules out redrawing the pet is quietly broken.
 
     Output is an ordinary image file. The result goes on to the same Ken
     Burns / Image-to-Video path any other photo takes, so this interface
     needs to produce *an image*, not a finished shot.
     """
 
-    def preflight(self) -> None:
+    def preflight(self, *, mode: str = "extend") -> None:
         """Raise if this provider clearly cannot run right now.
 
         Same contract as VideoGenerationProvider.preflight above: a cheap
         early check so callers fail before the expensive work leading up to
         the first call, with a no-op default for providers that can't
         usefully tell in advance.
+
+        mode says which treatment is coming ("extend" or "replace"), because
+        they need different things installed — checking for a matting model
+        an extend-only run will never load would refuse work that would have
+        succeeded.
         """
 
     @abstractmethod
@@ -104,4 +117,28 @@ class ImageEditingProvider(ABC):
         A source already at the target aspect ratio has no margin to fill;
         implementations return it unchanged rather than spending a
         generation pass to produce a copy.
+        """
+
+    @abstractmethod
+    def replace_background(
+        self,
+        image_path: str,
+        *,
+        target_width: int,
+        target_height: int,
+        prompt: str | None = None,
+        output_path: str,
+    ) -> str:
+        """Put the subject of image_path into a generated setting at
+        target_width x target_height, and write the result to output_path
+        (returned).
+
+        The subject is segmented out and kept as photographed; everything
+        else in the frame is generated from prompt ("a grey cat on green
+        grass in a sunny park"). Unlike outpaint_to_frame this always has
+        work to do — a photo already shaped like the frame still has its
+        whole background replaced.
+
+        prompt describes the finished picture, subject included, since the
+        generated area is produced from it alone.
         """

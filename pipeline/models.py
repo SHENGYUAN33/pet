@@ -98,12 +98,13 @@ class GenerationJob(Base):
     video_provider: Mapped[str | None] = mapped_column(String, nullable=True)
     animate_prompt: Mapped[str | None] = mapped_column(String, nullable=True)
     # The same reasoning for the generated-background pass
-    # (pipeline/outpaint.py): a resumed run without these would finish the
+    # (pipeline/background.py): a resumed run without these would finish the
     # video with blurred bars on the scenes it had not reached yet, next to
     # generated surroundings on the ones it had.
-    outpaint_scenes: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    background_scenes: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    background_mode: Mapped[str | None] = mapped_column(String, nullable=True)
     image_provider: Mapped[str | None] = mapped_column(String, nullable=True)
-    outpaint_prompt: Mapped[str | None] = mapped_column(String, nullable=True)
+    background_prompt: Mapped[str | None] = mapped_column(String, nullable=True)
     disclosure_missing: Mapped[dict] = mapped_column(JSONB)
     structure_issues: Mapped[dict] = mapped_column(JSONB)
     script_json: Mapped[dict] = mapped_column(JSONB)
@@ -145,8 +146,10 @@ class SceneJob(Base):
     attempt rather than inserting a second one. video_provider and
     animate_prompt are NULL for the scenes that were not animated — most of
     them, since real footage and Ken Burns are the default (strategy A) —
-    and image_provider/outpaint_prompt likewise for the scenes whose
-    background was not generated. A shot carrying any generated content has
+    and image_provider/background_mode/background_prompt likewise for the
+    scenes whose background was not generated. background_mode also says
+    which treatment a shot got, which is what tells a reviewer whether the
+    place in it was photographed or invented. A shot carrying any generated content has
     to stay identifiable afterwards: it answers "was this real?" and it is
     what the AI-generation disclosure has to be driven from.
 
@@ -168,7 +171,8 @@ class SceneJob(Base):
     video_provider: Mapped[str | None] = mapped_column(String, nullable=True)
     animate_prompt: Mapped[str | None] = mapped_column(String, nullable=True)
     image_provider: Mapped[str | None] = mapped_column(String, nullable=True)
-    outpaint_prompt: Mapped[str | None] = mapped_column(String, nullable=True)
+    background_mode: Mapped[str | None] = mapped_column(String, nullable=True)
+    background_prompt: Mapped[str | None] = mapped_column(String, nullable=True)
     clip_path: Mapped[str | None] = mapped_column(String, nullable=True)
     error: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

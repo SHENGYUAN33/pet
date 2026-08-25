@@ -60,9 +60,10 @@ def start_generation_job(
     animate_scenes: set[int] | None = None,
     video_provider: str | None = None,
     animate_prompt: str | None = None,
-    outpaint_scenes: set[int] | None = None,
+    background_scenes: set[int] | None = None,
+    background_mode: str | None = None,
     image_provider: str | None = None,
-    outpaint_prompt: str | None = None,
+    background_prompt: str | None = None,
 ) -> int:
     """Open a RUNNING job row before the work begins and return its id.
 
@@ -81,9 +82,10 @@ def start_generation_job(
             animate_scenes=sorted(animate_scenes) if animate_scenes else None,
             video_provider=video_provider,
             animate_prompt=animate_prompt,
-            outpaint_scenes=sorted(outpaint_scenes) if outpaint_scenes else None,
+            background_scenes=sorted(background_scenes) if background_scenes else None,
+            background_mode=background_mode,
             image_provider=image_provider,
-            outpaint_prompt=outpaint_prompt,
+            background_prompt=background_prompt,
             disclosure_missing={"missing_restrictions": []},
             structure_issues={"issues": []},
             script_json={},
@@ -160,9 +162,10 @@ def get_generation_job(job_id: int) -> dict | None:
             "animate_scenes": row.animate_scenes,
             "video_provider": row.video_provider,
             "animate_prompt": row.animate_prompt,
-            "outpaint_scenes": row.outpaint_scenes,
+            "background_scenes": row.background_scenes,
+            "background_mode": row.background_mode,
             "image_provider": row.image_provider,
-            "outpaint_prompt": row.outpaint_prompt,
+            "background_prompt": row.background_prompt,
             "script_json": row.script_json,
             "parent_job_id": row.parent_job_id,
             "cleaned_at": row.cleaned_at.isoformat() if row.cleaned_at else None,
@@ -205,7 +208,8 @@ def start_scene_job(
     video_provider: str | None = None,
     animate_prompt: str | None = None,
     image_provider: str | None = None,
-    outpaint_prompt: str | None = None,
+    background_mode: str | None = None,
+    background_prompt: str | None = None,
 ) -> None:
     """Open (or reopen, on a retry) the row for one scene of a run.
 
@@ -225,7 +229,8 @@ def start_scene_job(
                     video_provider=video_provider,
                     animate_prompt=animate_prompt,
                     image_provider=image_provider,
-                    outpaint_prompt=outpaint_prompt,
+                    background_mode=background_mode,
+                    background_prompt=background_prompt,
                 )
             )
             return
@@ -235,7 +240,8 @@ def start_scene_job(
         scene.video_provider = video_provider
         scene.animate_prompt = animate_prompt
         scene.image_provider = image_provider
-        scene.outpaint_prompt = outpaint_prompt
+        scene.background_mode = background_mode
+        scene.background_prompt = background_prompt
         scene.clip_path = None
         scene.error = None
         scene.finished_at = None
@@ -288,7 +294,8 @@ def list_scene_jobs(job_id: int) -> list[dict]:
                 "video_provider": row.video_provider,
                 "animate_prompt": row.animate_prompt,
                 "image_provider": row.image_provider,
-                "outpaint_prompt": row.outpaint_prompt,
+                "background_mode": row.background_mode,
+                "background_prompt": row.background_prompt,
                 "clip_path": row.clip_path,
                 "error": row.error,
                 "finished_at": row.finished_at.isoformat() if row.finished_at else None,

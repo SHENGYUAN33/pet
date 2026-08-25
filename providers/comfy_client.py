@@ -65,8 +65,20 @@ class ComfyUIClient:
         """
         resp = requests.get(f"{self.base_url}/object_info/{class_type}", timeout=10)
         resp.raise_for_status()
-        spec = resp.json()[class_type]["input"]["required"][input_name][0]
-        return list(spec) if isinstance(spec, list) else []
+        entry = resp.json()[class_type]["input"]["required"][input_name]
+
+        # Two schema shapes are in play. Older nodes declare the choices
+        # inline as the first element; nodes written against the newer
+        # IO.Schema API declare the literal string "COMBO" there and put the
+        # choices in the options dict beside it. Reading only the first form
+        # silently reports "nothing installed" for the second — which reads
+        # as a missing model file and sends people off to re-download
+        # something they already have.
+        if isinstance(entry[0], list):
+            return list(entry[0])
+        if len(entry) > 1 and isinstance(entry[1], dict):
+            return list(entry[1].get("options", []))
+        return []
 
     def upload_image(self, image_path: str) -> str:
         """Upload a local image into the server's input directory, return the

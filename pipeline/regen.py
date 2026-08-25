@@ -4,6 +4,7 @@ import copy
 import uuid
 
 from pipeline import config
+from pipeline.background import BackgroundMode
 from pipeline.fact_check import find_missing_disclosures
 from pipeline.pet_repo import (
     fail_generation_job,
@@ -56,9 +57,10 @@ def regenerate_scene(
     animate: bool = False,
     video_provider: str = "svd",
     animate_prompt: str | None = None,
-    outpaint: bool = False,
+    generate_background: bool = False,
+    background_mode: BackgroundMode = BackgroundMode.EXTEND,
     image_provider: str = "comfy",
-    outpaint_prompt: str | None = None,
+    background_prompt: str | None = None,
     on_progress: ProgressCallback = noop,
 ) -> tuple[str, int]:
     """Re-render a whole video from job_id's script with one scene patched,
@@ -68,7 +70,8 @@ def regenerate_scene(
     generation) rather than reusing the old job's clip files, to avoid the
     complexity of tracking which clips are still valid. voice_sample/
     music_track are not persisted on the job, so pass them again if the
-    original generation used them — the same goes for animate/outpaint,
+    original generation used them — the same goes for animate and
+    generate_background,
     which apply to the patched scene only, so a revision does not silently
     inherit generated content the reviewer did not ask for again.
     Returns (output_path, new_job_id); the
@@ -104,9 +107,10 @@ def regenerate_scene(
         animate_scenes={scene_id} if animate else None,
         video_provider=video_provider,
         animate_prompt=animate_prompt,
-        outpaint_scenes={scene_id} if outpaint else None,
+        background_scenes={scene_id} if generate_background else None,
+        background_mode=background_mode.value,
         image_provider=image_provider,
-        outpaint_prompt=outpaint_prompt,
+        background_prompt=background_prompt,
     )
     try:
         final_path = _render_revision(
@@ -119,9 +123,10 @@ def regenerate_scene(
             animate=animate,
             video_provider=video_provider,
             animate_prompt=animate_prompt,
-            outpaint=outpaint,
+            generate_background=generate_background,
+            background_mode=background_mode,
             image_provider=image_provider,
-            outpaint_prompt=outpaint_prompt,
+            background_prompt=background_prompt,
             on_progress=on_progress,
         )
     except Exception as e:
@@ -142,9 +147,10 @@ def _render_revision(
     animate: bool,
     video_provider: str,
     animate_prompt: str | None,
-    outpaint: bool,
+    generate_background: bool,
+    background_mode: BackgroundMode,
     image_provider: str,
-    outpaint_prompt: str | None,
+    background_prompt: str | None,
     on_progress: ProgressCallback,
 ) -> str:
     """The body of regenerate_scene() — split out so the job row is closed as
@@ -176,9 +182,10 @@ def _render_revision(
         animate_scenes={scene_id} if animate else None,
         video_provider=video_provider,
         animate_prompt=animate_prompt,
-        outpaint_scenes={scene_id} if outpaint else None,
+        background_scenes={scene_id} if generate_background else None,
+        background_mode=background_mode,
         image_provider=image_provider,
-        outpaint_prompt=outpaint_prompt,
+        background_prompt=background_prompt,
         on_progress=scaled(on_progress, 0.05, 0.98),
         scene_tracker=DatabaseSceneTracker(new_job_id),
     )

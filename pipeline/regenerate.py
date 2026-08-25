@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from pipeline.background import BackgroundMode
 from pipeline.regen import regenerate_scene
 
 if sys.stdout.encoding.lower() != "utf-8":
@@ -45,23 +46,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="Which open-source I2V model to use with --animate (default: svd)",
     )
     parser.add_argument(
-        "--outpaint",
+        "--background",
         action="store_true",
-        help="Fill this scene's empty frame margin with AI-generated surroundings "
-        "instead of blurred bars (only applies if the scene's visual_source is a photo)",
+        help="Give this scene a generated background (only applies if the scene's "
+        "visual_source is a photo); see --background-mode",
     )
     parser.add_argument(
-        "--outpaint-prompt",
+        "--background-mode",
+        default="extend",
+        choices=["extend", "replace"],
+        help="extend: keep the photo's real background and generate only the empty "
+        "frame margin (default). replace: cut the pet out and generate an entirely "
+        "new setting — the shot then carries the AI-generation disclosure.",
+    )
+    parser.add_argument(
+        "--background-prompt",
         default=None,
-        help="What the generated surroundings should be, in ENGLISH and describing "
-        "the whole picture (SDXL's text encoder does not understand Chinese), e.g. "
-        "'a grey cat resting in a cosy living room, warm afternoon light, realistic photograph'",
+        help="What to generate, in ENGLISH (SDXL's text encoder does not understand "
+        "Chinese). For extend describe the whole picture, pet included; for replace "
+        "describe the setting ONLY, e.g. 'green grass in a sunny park, blurred trees behind, bright daylight, realistic photograph'",
     )
     parser.add_argument(
         "--image-provider",
         default="comfy",
         choices=["comfy"],
-        help="Which image provider fills the margin for --outpaint (default: comfy)",
+        help="Which image provider generates the background for --background (default: comfy)",
     )
     parser.add_argument(
         "--animate-prompt",
@@ -86,9 +95,10 @@ def main() -> None:
         animate=args.animate,
         video_provider=args.video_provider,
         animate_prompt=args.animate_prompt,
-        outpaint=args.outpaint,
+        generate_background=args.background,
+        background_mode=BackgroundMode(args.background_mode),
         image_provider=args.image_provider,
-        outpaint_prompt=args.outpaint_prompt,
+        background_prompt=args.background_prompt,
     )
     print(f"New job id: {new_job_id} (parent: {args.job_id})")
     print(f"Done: {output_path}")

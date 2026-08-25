@@ -12,11 +12,11 @@
 | Ollama | 本機 LLM（腳本生成） | 通常安裝後會常駐在背景，開機自動啟動 |
 | Python `.venv` | 專案依賴（FastAPI/SQLAlchemy/diffusers 等都裝在裡面） | 每個新終端機視窗都要手動啟用 |
 | `uvicorn` (FastAPI) | 網頁介面的後端伺服器 | `.venv` 啟用後執行 `uvicorn webapp.main:app --reload` |
-| ComfyUI 伺服器 | Wan2.2 圖生影片（`--video-provider wan`）與 AI 背景延伸（`--outpaint-scenes`）；SVD/CogVideoX 不用 | 見下方「啟動 ComfyUI」 |
+| ComfyUI 伺服器 | Wan2.2 圖生影片（`--video-provider wan`）與 AI 背景生成（`--background-scenes`）；SVD/CogVideoX 不用 | 見下方「啟動 ComfyUI」 |
 
 ---
 
-## 啟動 ComfyUI（要用 `--video-provider wan` 或 `--outpaint-scenes` 時才需要）
+## 啟動 ComfyUI（要用 `--video-provider wan` 或 `--background-scenes` 時才需要）
 
 Wan2.2 走的是獨立的 ComfyUI 伺服器（`vendor/comfyui/`，有自己的 `.venv`，不是專案主要的 `.venv`）。⚠️ **`vendor/` 整個目錄都在 `.gitignore` 內、不進版控**，換一台機器 clone 這個 repo 後不會有它，要自己另外裝好 ComfyUI 並下載 `pipeline/config.py` 裡 `WAN_MODEL_FILE`／`WAN_VAE_FILE`／`WAN_T5_FILE` 指定的檢查點。裝好後另開一個終端機視窗常駐執行：
 
@@ -28,7 +28,7 @@ python main.py --listen 127.0.0.1 --port 8188
 
 看到 `To see the GUI go to: http://127.0.0.1:8188` 就代表啟動成功，**這個視窗要保持開著**。`providers/video/wan_provider.py` 會直接呼叫這個伺服器的 API，沒開的話 `--video-provider wan` 會直接報錯提示你先啟動。
 
-同一台伺服器也負責 **AI 背景延伸（outpaint）**，那需要再放一個 SDXL checkpoint 到 `vendor/comfyui/models/checkpoints/`（預設檔名見 `pipeline/config.py` 的 `OUTPAINT_MODEL_FILE`）。沒放的話 `--outpaint-scenes` 會在開跑前就報錯，並告訴你檔案該放哪。
+同一台伺服器也負責 **AI 背景生成**，需要另外兩個模型檔（預設檔名見 `pipeline/config.py` 的 `BACKGROUND_*`）：`vendor/comfyui/models/checkpoints/` 放一個 SDXL checkpoint（extend 與 replace 都要），`vendor/comfyui/models/background_removal/` 放 BiRefNet 去背模型（只有 replace 要，Hugging Face 的 `Comfy-Org/BiRefNet`）。缺哪個會在開跑前就報錯，並告訴你檔案該放哪。一張 720x1280、25 步約 **8 秒**。
 
 實測數字（RTX 5070 Ti 16GB VRAM）：一顆鏡頭（約 5 秒、20 步取樣）大概 **8 分鐘**（含模型載入），VRAM 用量約 11GB。這是 SVD/CogVideoX 之外唯一「動作品質好、速度也能接受」的選項——細節跟為什麼選這條路（而不是 diffusers 或 Wan 官方 `generate.py`）見 `pipeline/config.py` 的 `WAN_*` 註解區塊。
 
@@ -118,11 +118,14 @@ python -m pipeline.run --pet-id PET-2026-001 --animate-scenes 2,4 --video-provid
 python -m pipeline.regenerate <job_id> <scene_id> --animate --video-provider wan --animate-prompt "狗狗歪頭看鏡頭"
 
 # 把照片鏡頭的空白邊用 AI 生成的環境補滿（取代模糊黑邊）；一樣需要 ComfyUI 先開著
-# ⚠️ outpaint 的 prompt 必須用**英文**，而且要描述「整張畫面」（含照片裡已經有的東西）——
-# SDXL 的文字編碼器只懂英文，中文 prompt 會被當成雜訊，模型就自己亂生（實測過：
-# 中文的「溫暖客廳」生出了夜景城市天際線）。
-python -m pipeline.run --pet-id PET-2026-001 --outpaint-scenes 1,3 --outpaint-prompt "a grey cat resting in a cosy living room, warm afternoon light, realistic photograph"
-python -m pipeline.regenerate <job_id> <scene_id> --outpaint --outpaint-prompt "a grey cat on green grass in a sunny park, realistic photograph"
+# ⚠️ background 的 prompt 必須用**英文**（SDXL 的文字編碼器只懂英文，中文會被當成雜訊，
+# 模型就自己亂生——實測過：中文的「溫暖客廳」生出了夜景城市天際線）。
+# extend（預設）＝只補畫面空白邊、保留照片真實背景，prompt 要描述「整張畫面」（含寵物）：
+python -m pipeline.run --pet-id PET-2026-001 --background-scenes 1,3 --background-prompt "a grey cat resting in a cosy living room, warm afternoon light, realistic photograph"
+# replace ＝把寵物去背、整個場景重生，prompt 只描述「場景」——寫到動物會多生一隻：
+python -m pipeline.run --pet-id PET-2026-001 --background-scenes 1,3 --background-mode replace \
+  --background-prompt "green grass in a sunny park, blurred trees behind, bright daylight, realistic photograph"
+python -m pipeline.regenerate <job_id> <scene_id> --background --background-mode replace --background-prompt "green grass in a sunny park, blurred trees behind, bright daylight, realistic photograph"
 
 # 跑測試
 pytest
