@@ -83,6 +83,20 @@ def render_script(
     animate_scenes = animate_scenes or set()
     tracker = scene_tracker or NoopSceneTracker()
 
+    # Which scenes a resumed run can skip, decided once so the check below and
+    # the render loop agree on it.
+    reusable_clips = {
+        scene["scene_id"]: tracker.reusable_clip(scene["scene_id"]) for scene in script["scenes"]
+    }
+    # Resolve every source that still has to be rendered before the TTS pass:
+    # a script naming an asset the profile doesn't have is unrenderable, and
+    # discovering that at scene 1 wastes a full narration pass first. Scenes
+    # whose clip is being reused aren't checked — their source may legitimately
+    # have been removed since that clip was produced.
+    for scene in script["scenes"]:
+        if reusable_clips[scene["scene_id"]] is None:
+            _resolve_visual_path(profile, scene["visual_source"])
+
     if voice_sample:
         on_progress("產生旁白配音（TTS）", 0.0)
         tts = XTTSProvider()
@@ -115,7 +129,7 @@ def render_script(
         scene_fraction = 0.2 + 0.7 * (index / scene_count)
         ordered_audio_paths.append(audio_paths[scene_id])
 
-        reused = tracker.reusable_clip(scene_id)
+        reused = reusable_clips[scene_id]
         if reused is not None:
             on_progress(f"鏡頭 {index + 1}/{scene_count}：沿用上次已完成的結果", scene_fraction)
             video_clip_paths.append(reused)

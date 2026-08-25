@@ -100,3 +100,17 @@ def test_regenerate_scene_marks_the_new_job_failed_and_links_its_parent(monkeypa
     assert len(failed) == 1
     assert failed[0]["parent_job_id"] == parent_id
     assert "ffmpeg exited with 1" in failed[0]["error"]
+
+
+def test_generate_video_on_a_pet_with_no_media_creates_no_job_row():
+    """Also a bad request rather than a failed run: without assets there is
+    nothing a script could point a scene at, so it never gets as far as one."""
+    profile = sample_profile(TEST_PET_ID, name="沒有素材的貓")
+    profile.media.assets = []
+    pet_repo.save_pet(profile)
+    before = len(pet_repo.list_generation_jobs(TEST_PET_ID))
+
+    with pytest.raises(ValueError, match="no media assets"):
+        run.generate_video(pet_id=TEST_PET_ID)
+
+    assert len(pet_repo.list_generation_jobs(TEST_PET_ID)) == before

@@ -40,7 +40,11 @@ def completed_job(
 
 def sample_profile(pet_id: str, *, name: str = "測試貓") -> PetProfile:
     """A minimal PetProfile that passes validation — for tests about
-    something other than the profile schema itself."""
+    something other than the profile schema itself.
+
+    It carries one photo asset because a pet with no media is refused before
+    scripting starts (pipeline.script_gen.require_media_assets); IMG-001 is
+    the id the scripts in these tests reference."""
     return PetProfile.model_validate(
         {
             "pet_id": pet_id,
@@ -58,7 +62,7 @@ def sample_profile(pet_id: str, *, name: str = "測試貓") -> PetProfile:
             },
             "adoption_requirements": [],
             "contact_url": "https://example.org/adopt/test",
-            "media": {"assets": []},
+            "media": {"assets": [{"asset_id": "IMG-001", "type": "photo", "url": "img-001.jpg"}]},
             "identity_card": {},
         }
     )

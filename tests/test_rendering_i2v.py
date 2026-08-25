@@ -141,3 +141,16 @@ def test_render_script_without_animate_scenes_uses_ken_burns(photo_profile, tmp_
 
     assert not (work_dir / "scene_1_i2v.mp4").exists()
     assert abs(_probe_duration(final_path) - 3.0) < 0.2
+
+
+def test_render_script_rejects_unknown_visual_source_before_narration(photo_profile, tmp_path):
+    """An unresolvable visual_source must be caught up front: discovering it
+    inside the scene loop means a whole narration pass has already run."""
+    work_dir = tmp_path / "work"
+    script = _script_with_one_photo_scene()
+    script["scenes"][0]["visual_source"] = "generated"
+
+    with pytest.raises(ValueError, match="generated"):
+        render_script(photo_profile, script, work_dir)
+
+    assert not (work_dir / "audio").exists(), "should fail before generating scene audio"

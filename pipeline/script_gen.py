@@ -57,12 +57,32 @@ _PROMPT_TEMPLATE = """\
 """
 
 
-def _build_prompt(profile: PetProfile, *, style: str, duration: int) -> str:
-    asset_list = (
-        "\n".join(
-            f"- {a.asset_id} ({a.type}): {a.url.rsplit('/', 1)[-1]}" for a in profile.media.assets
+def require_media_assets(profile: PetProfile) -> None:
+    """Refuse to script a pet whose profile lists no media.
+
+    Every scene has to name a real asset (strategy A, see CLAUDE.md): there
+    is no text-to-video path here, so a script written without an asset list
+    can only invent sources that pipeline/rendering.py cannot resolve.
+    Checked before the LLM runs rather than at render time — otherwise three
+    script calls and a full TTS pass are spent on a run that was never going
+    to produce a video.
+
+    Uploading files into storage/assets/<pet_id>/ does not satisfy this on
+    its own; they also have to be listed in the profile's media assets.
+    """
+    if not profile.media.assets:
+        raise ValueError(
+            f"Pet {profile.pet_id!r} has no media assets in its profile — add its "
+            "photos/videos to the profile (uploading files into "
+            f"storage/assets/{profile.pet_id}/ does not add them by itself) "
+            "before generating a video"
         )
-        or '(無可用素材，請只使用 visual_source: "generated" 並標示為 AI 生成)'
+
+
+def _build_prompt(profile: PetProfile, *, style: str, duration: int) -> str:
+    require_media_assets(profile)
+    asset_list = "\n".join(
+        f"- {a.asset_id} ({a.type}): {a.url.rsplit('/', 1)[-1]}" for a in profile.media.assets
     )
 
     restrictions = "、".join(profile.personality_tags.restrictions) or "（無）"

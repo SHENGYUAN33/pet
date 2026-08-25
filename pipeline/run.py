@@ -21,7 +21,7 @@ from pipeline.progress import ProgressCallback, noop, scaled
 from pipeline.qa import validate_script_structure
 from pipeline.rendering import render_script
 from pipeline.scene_tracking import DatabaseSceneTracker
-from pipeline.script_gen import SCRIPT_STYLES, generate_all_styles
+from pipeline.script_gen import SCRIPT_STYLES, generate_all_styles, require_media_assets
 from providers.llm.ollama_provider import OllamaLLMProvider
 
 
@@ -54,6 +54,9 @@ def generate_video(
             f"No pet found with id {pet_id!r} — import it first: "
             f"python -m pipeline.manage import-profile <path>"
         )
+    # Same reasoning as the check above: a pet with no media cannot be
+    # scripted at all, so this is a bad request rather than a failed run.
+    require_media_assets(profile)
 
     # Opened before the slow work so a crash or restart mid-run still leaves
     # a record; _run_generation() below closes it either way.

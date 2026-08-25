@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from pipeline.profile import PetProfile
 from pipeline.script_gen import SCRIPT_STYLES, _build_prompt, generate_script
 from providers.base import LLMProvider
@@ -98,3 +100,14 @@ def test_prompt_shows_placeholder_when_profile_has_no_restrictions():
     prompt = _build_prompt(profile, style="cute", duration=30)
 
     assert "必要揭露（不可省略）：\n（無）" in prompt
+
+
+def test_prompt_generation_refuses_a_profile_with_no_media_assets():
+    """The renderer can only use assets the profile lists, so a pet without
+    any has to be rejected before three LLM calls and a TTS pass are spent
+    on a script whose visual_source values cannot resolve."""
+    profile = PetProfile.load(EXAMPLE_PROFILE)
+    profile.media.assets = []
+
+    with pytest.raises(ValueError, match="no media assets"):
+        generate_script(profile, FakeLLM(), style="cute")
