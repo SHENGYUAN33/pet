@@ -376,3 +376,24 @@ def cleanup_generation_job(job_id: int) -> dict:
         if not already_clean:
             job.cleaned_at = datetime.now(UTC)
         return {"job_id": job_id, "bytes_freed": freed, "already_clean": already_clean}
+
+
+def cleanup_old_generation_jobs(pet_id: str, *, keep: int) -> dict:
+    """Clean up every version of a pet's video except the newest `keep`.
+
+    A debugging session leaves a pile of failed and superseded runs, and
+    clearing them one at a time is its own chore. Newest-first, so `keep`
+    counts the versions still worth playing; running jobs are left alone
+    because their files are still being written.
+    """
+    jobs = list_generation_jobs(pet_id)
+    stale = [
+        job
+        for job in jobs[keep:]
+        if not job["cleaned_at"] and job["status"] != JobStatus.RUNNING.value
+    ]
+
+    freed = 0
+    for job in stale:
+        freed += cleanup_generation_job(job["id"])["bytes_freed"]
+    return {"cleaned": [job["id"] for job in stale], "bytes_freed": freed}

@@ -34,6 +34,7 @@ from pydantic import BaseModel, ValidationError
 from pipeline import config
 from pipeline.pet_repo import (
     cleanup_generation_job,
+    cleanup_old_generation_jobs,
     get_generation_job,
     get_pet,
     list_generation_jobs,
@@ -321,6 +322,17 @@ def api_generate(pet_id: str, req: GenerateRequest):
         return {"output_path": output_path, "job_id": job_id}
 
     return _start(kind="generate", pet_id=pet_id, label="產生新影片", work=work)
+
+
+@app.delete("/api/pets/{pet_id}/job-files")
+def api_cleanup_old_jobs(pet_id: str, keep: int = 3):
+    """Clean up every version except the newest `keep` — the batch form of
+    the per-version cleanup, for clearing out a debugging session's pile."""
+    if get_pet(pet_id) is None:
+        raise HTTPException(status_code=404, detail=f"No pet found with id {pet_id!r}")
+    if keep < 0:
+        raise HTTPException(status_code=400, detail="keep must not be negative")
+    return cleanup_old_generation_jobs(pet_id, keep=keep)
 
 
 @app.delete("/api/jobs/{job_id}/files")

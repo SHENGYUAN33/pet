@@ -113,6 +113,8 @@ h1, h2, h3, h4 { margin: 0; font-weight: 650; }
 }
 .hint { font-size: 12px; color: var(--text-faint); line-height: 1.5; }
 .hint.warn { color: var(--warn); }
+.linkish { background: none; border: 0; padding: 0; font: inherit; color: var(--accent);
+  cursor: pointer; text-decoration: underline; }
 
 /* ---------- cards ---------- */
 .card {
@@ -535,7 +537,10 @@ textarea.auto { min-height: 76px; resize: vertical; font-family: inherit; }
 
         <div class="card">
           <div class="row" style="justify-content:space-between">
-            <p class="section-label" style="margin:0">生成歷程</p>
+            <div class="row" style="gap:10px">
+              <p class="section-label" style="margin:0">生成歷程</p>
+              <button type="button" class="tiny" id="cleanup-old-btn" hidden>🧹 只留最新 3 個</button>
+            </div>
             <span class="hint" id="job-count"></span>
           </div>
           <div id="job-list" style="margin-top:10px"></div>
@@ -840,6 +845,10 @@ let allPets = [];
 let currentPetId = null;
 let currentJobs = [];
 let playingJobId = null;
+// Cleaned-up versions are off the list by default — see renderJobs.
+let showCleanedJobs = false;
+// How many versions the batch cleanup leaves playable.
+const KEEP_RECENT_JOBS = 3;
 let sceneCache = {};
 
 const $ = (id) => document.getElementById(id);
@@ -1110,8 +1119,10 @@ async function selectPet(petId, keepPlaying) {
   refreshAssetChoices();
 
   currentJobs = data.jobs;
-  if (!keepPlaying || !currentJobs.some((j) => j.id === playingJobId)) {
-    playingJobId = currentJobs.length ? currentJobs[0].id : null;
+  // Only a version that still has its file can be played.
+  const playable = currentJobs.filter((j) => j.status === "done" && !j.cleaned_at);
+  if (!keepPlaying || !playable.some((j) => j.id === playingJobId)) {
+    playingJobId = playable.length ? playable[0].id : null;
   }
   playJob(playingJobId);
   renderRegenPanel();
@@ -1188,14 +1199,45 @@ async function refreshScenePlan() {
 function renderJobs() {
   const host = $("job-list");
   host.innerHTML = "";
-  $("job-count").textContent = currentJobs.length ? currentJobs.length + " 個版本" : "";
-  if (!currentJobs.length) {
+
+  // Cleaning up is how a version is taken off this list: a failed attempt or
+  // a superseded take has nothing left to play, and leaving it here is the
+  // clutter the cleanup was meant to remove. The rows still exist — the
+  // toggle below brings them back into view when the record is wanted.
+  const cleanedCount = currentJobs.filter((j) => j.cleaned_at).length;
+  const visible = showCleanedJobs ? currentJobs : currentJobs.filter((j) => !j.cleaned_at);
+
+  const count = $("job-count");
+  count.textContent = "";
+  if (visible.length) {
+    count.append(visible.length + " 個版本");
+  }
+  if (cleanedCount) {
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "linkish";
+    toggle.textContent = showCleanedJobs
+      ? "隱藏 " + cleanedCount + " 個已清理"
+      : cleanedCount + " 個已清理 · 顯示";
+    toggle.onclick = () => {
+      showCleanedJobs = !showCleanedJobs;
+      renderJobs();
+    };
+    count.append(" ", toggle);
+  }
+
+  const batchBtn = $("cleanup-old-btn");
+  batchBtn.hidden = currentJobs.filter((j) => !j.cleaned_at).length <= KEEP_RECENT_JOBS;
+
+  if (!visible.length) {
     host.className = "hint";
-    host.textContent = "還沒有生成過影片 — 用右側「產生新影片」開始。";
+    host.textContent = cleanedCount
+      ? "這隻寵物的版本都已清理檔案 — 用上方切換可以看它們的生成紀錄。"
+      : "還沒有生成過影片 — 用右側「產生新影片」開始。";
     return;
   }
   host.className = "";
-  for (const job of currentJobs) {
+  for (const job of visible) {
     const missing = ((job.disclosure_missing || {}).missing_restrictions) || [];
     const issues = ((job.structure_issues || {}).issues) || [];
     // Jobs are recorded from the moment a run starts, so a card can describe
@@ -1306,6 +1348,26 @@ async function cleanupJob(jobId) {
   }
 }
 
+async function cleanupOldJobs() {
+  const stale = currentJobs.filter((j) => !j.cleaned_at).length - KEEP_RECENT_JOBS;
+  const ok = confirm(
+    "清理最新 " + KEEP_RECENT_JOBS + " 個以外的 " + stale + " 個版本？\n\n" +
+      "它們的影片檔會被刪除並從這個列表移除，生成紀錄仍然保留。此動作無法復原。"
+  );
+  if (!ok) return;
+  try {
+    const result = await api(
+      "/api/pets/" + encodeURIComponent(currentPetId) + "/job-files?keep=" + KEEP_RECENT_JOBS,
+      { method: "DELETE" }
+    );
+    const mb = (result.bytes_freed / 1048576).toFixed(1);
+    toast("已清理 " + result.cleaned.length + " 個版本，釋放 " + mb + " MB", "ok");
+    await selectPet(currentPetId, true);
+  } catch (err) {
+    toast("清理失敗：" + err.message, "err");
+  }
+}
+
 function playJob(jobId, autoplay) {
   const player = $("video-player");
   playingJobId = jobId;
@@ -1329,8 +1391,10 @@ function renderRegenPanel() {
   const form = $("regenerate-form");
   const empty = $("regen-empty");
   // Regeneration reads the chosen version's script, which only a finished
-  // run has — a running or failed job can't be a starting point.
-  const doneJobs = currentJobs.filter((j) => j.status === "done");
+  // run has — a running or failed job can't be a starting point. Cleaned-up
+  // versions are left out too: they are off the history list, so offering
+  // them here would be the clutter coming back by another door.
+  const doneJobs = currentJobs.filter((j) => j.status === "done" && !j.cleaned_at);
   if (!currentPetId || !doneJobs.length) {
     form.hidden = true;
     empty.hidden = false;
@@ -1432,6 +1496,7 @@ function openRegenFor(jobId) {
 }
 
 $("regen-job-select").addEventListener("change", (e) => loadScenes(e.target.value));
+$("cleanup-old-btn").addEventListener("click", cleanupOldJobs);
 
 /* ---------- tabs ---------- */
 function switchTab(name) {

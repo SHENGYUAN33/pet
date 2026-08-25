@@ -35,8 +35,17 @@ def test_page_javascript_parses(tmp_path):
     extracted = tmp_path / "index_extracted.js"
     extracted.write_text(_page_scripts(), encoding="utf-8")
 
+    # Explicit utf-8 with errors="replace": node reports the offending line
+    # itself, which here is Chinese UI copy, and letting it decode with the
+    # Windows console codepage would lose the one thing worth reading.
     result = subprocess.run(
-        ["node", "--check", str(extracted)], capture_output=True, text=True, check=False
+        ["node", "--check", str(extracted)],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
 
-    assert result.returncode == 0, f"index.html's JavaScript does not parse:\n{result.stderr}"
+    assert result.returncode == 0, "index.html's JavaScript does not parse:\n" + (
+        result.stderr or result.stdout or ""
+    )

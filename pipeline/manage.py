@@ -56,19 +56,17 @@ def cmd_cleanup_jobs(args) -> None:
     the record of which provider, prompt and script produced each video, not
     the clips.
     """
-    jobs = pet_repo.list_generation_jobs(args.pet_id)
-    stale = [j for j in jobs[args.keep :] if not j["cleaned_at"] and j["status"] != "running"]
-    if not stale:
+    result = pet_repo.cleanup_old_generation_jobs(args.pet_id, keep=args.keep)
+    if not result["cleaned"]:
         print(f"Nothing to clean up for {args.pet_id} (keeping the newest {args.keep}).")
         return
 
-    total = 0
-    for job in stale:
-        result = pet_repo.cleanup_generation_job(job["id"])
-        total += result["bytes_freed"]
-        print(f"Cleaned job {job['id']}: freed {result['bytes_freed'] / 1048576:.1f} MB")
+    for job_id in result["cleaned"]:
+        print(f"Cleaned job {job_id}")
     print()
-    print(f"Freed {total / 1048576:.1f} MB across {len(stale)} version(s).")
+    print(
+        f"Freed {result['bytes_freed'] / 1048576:.1f} MB across {len(result['cleaned'])} version(s)."
+    )
 
 
 def main() -> None:

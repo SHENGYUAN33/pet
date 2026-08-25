@@ -42,7 +42,11 @@ def _pet():
 
 def _job_with_files(script: dict | None = None) -> tuple[int, object]:
     """A finished job whose work_dir holds a rendered video."""
-    work_dir = config.OUTPUT_DIR / TEST_PET_ID / "gen_cleanup_test"
+    return _job_with_files_at("gen_cleanup_test", script)
+
+
+def _job_with_files_at(dir_name: str, script: dict | None = None) -> tuple[int, object]:
+    work_dir = config.OUTPUT_DIR / TEST_PET_ID / dir_name
     work_dir.mkdir(parents=True, exist_ok=True)
     (work_dir / "scene_1.mp4").write_bytes(b"x" * 2048)
     output = work_dir / "final.mp4"
@@ -124,3 +128,27 @@ def test_cleanup_refuses_a_running_job():
 
     with pytest.raises(ValueError, match="still running"):
         pet_repo.cleanup_generation_job(job_id)
+
+
+def test_batch_cleanup_keeps_the_newest_and_clears_the_rest():
+    """A debugging session leaves a pile; clearing it one version at a time
+    is its own chore."""
+    job_ids = [_job_with_files_at(f"gen_batch_{i}")[0] for i in range(4)]
+
+    result = pet_repo.cleanup_old_generation_jobs(TEST_PET_ID, keep=2)
+
+    # list_generation_jobs is newest-first, so the two newest survive.
+    assert set(result["cleaned"]) == set(job_ids[:2])
+    remaining = {job["id"]: job["cleaned_at"] for job in pet_repo.list_generation_jobs(TEST_PET_ID)}
+    assert remaining[job_ids[-1]] is None
+    assert remaining[job_ids[0]] is not None
+
+
+def test_batch_cleanup_leaves_a_running_job_alone():
+    """Its files are still being written."""
+    running = pet_repo.start_generation_job(TEST_PET_ID, style="cute", duration=30)
+    _job_with_files_at("gen_batch_running")
+
+    result = pet_repo.cleanup_old_generation_jobs(TEST_PET_ID, keep=0)
+
+    assert running not in result["cleaned"]
