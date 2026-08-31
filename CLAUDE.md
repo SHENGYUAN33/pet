@@ -98,7 +98,16 @@
     - **QA 新增三項**（`pipeline/qa.py`）：未知的 mode、要了處理卻沒寫描述、以及**多個鏡頭共用同一句背景描述**（那就是舊的單一 prompt 行為套上新 schema）、整支片每顆鏡頭都是 `replace`（領養影片至少要有一顆是牠真正待過的地方）。
     - 生成紀錄：`disclosure_missing` 這個 JSONB 現在存兩個 key（`missing_restrictions`／`background_risks`），兩者分開是因為修法不同——一個要改旁白，一個要改背景描述。網頁的版本卡片會分開顯示。**沒有 migration**：欄位本來就是 JSONB。
     - **網頁端已接上**：`GenerateRequest` 多了 `background_scenes`／`background_mode`／`background_prompt`／`image_provider`，`RegenerateSceneRequest` 多了 `generate_background`／`background_mode`／`background_prompt`／`image_provider`。表單裡是「AI 背景（選填，覆寫腳本的決定）」摺疊區——**留白是正常狀態**，那代表每顆鏡頭照腳本自己的背景做。單鏡頭重生沿用跟動態化一樣的「一個控制項」規則：選了處理方式就等於啟用（沒有另一個獨立的勾選框可以互相矛盾）。填了描述卻沒指定鏡頭/沒啟用會被擋下來並說明原因，理由跟 `animate_prompt` 那條一樣：默默丟掉設定會讓人以為「這個功能沒作用」。鏡頭清單每一列也會標出該鏡頭的背景處理方式，`keep` 不標（每列都有徽章等於沒有徽章）。
-    - 還沒做的：VLM 的 Identity Consistency 檢查（QA 加權裡最重的 30%）。
+  - **一致性檢查（第六個切片，VLM）**：docs/architecture.md §11 把 Identity Consistency 排在 QA 加權的最前面（30%），而在這之前完全沒有任何自動檢查。它抓三種「人一眼看得出、但其他檢查都抓不到」的失敗：**寵物不見了**（分割沒找到東西，取樣器把整個畫面重畫）、**多了一隻不存在的動物**、**那不是這隻動物**（物種不對，或被 I2V 扭曲到認不出來）。
+    - `providers/base.py` 新增 `VLMProvider`（`inspect_image(image, prompt) -> str`，跟 `LLMProvider.complete` 一樣薄），實作 `providers/vlm/ollama_vlm_provider.py`（預設 `gemma3:12b`，跟腳本 LLM 同一台 Ollama）。判斷邏輯在 `pipeline/identity.py`，純函式 `_judge()` 可以不用 GPU 測。
+    - **只問「一張圖」，然後跟 Profile 比對，不做兩張圖比對**。兩張圖那條路先試過而且會騙人：跟它說「第一張是參考、第二張是影格」，它會回答第一張的內容——一張完全沒有動物的影格被它回報成「同一隻貓、信心 0.95、沒有問題」。給它一張圖時它很準（三個案例分別數出 1／3／0 隻動物，還主動指出貓看起來浮在草地上）。而且比對 Profile 本來就是對的：Profile 是唯一事實來源。
+    - **prompt 不可以把答案列給它看**。第一版在 schema 裡放了一個 `problems` free-text 欄位並舉例「肢體扭曲、邊緣融合不良…」，結果它每張圖都原封不動抄回那幾句，好圖也照抄——它在接話，不是在看圖。改成一個數量 ＋ 兩個是非題（`body_intact`／`sits_in_the_scene`）之後，答案才會隨圖片不同。
+    - **兩種發現的份量不一樣，措辭也不一樣**：畫面裡有幾隻動物、是什麼物種，接近算術，模型很可靠，所以直接陳述；「看起來像貼上去的」是判斷，措辭是「請確認這顆鏡頭」。把判斷寫成定論會教會審核者忽略警告。
+    - **只回報、不擋下**：判斷來自本機小模型，為了它的意見丟掉一支跑了好幾分鐘的影片並不划算。整個檢查（讀影格、連模型、解析回答）包在同一個 try 裡，檢查不了就記成「需要人工確認」，絕不往外丟例外。
+    - 只跑在**畫面被生成過**的鏡頭（有背景處理或有 I2V）。照片做 Ken Burns 的鏡頭就是那張照片，沒有東西會跑掉。檢查的是「進 `build_scene_clip` 之前的那張圖」，不是成品 clip——不然燒上去的字幕和揭露標示也會被模型讀進去。
+    - 結果存在 `SceneJob.identity_check`（JSONB，migration `5a3057c1499a`），重試會清掉（新的畫面，舊的判斷不再描述任何存在的東西）。網頁的鏡頭清單會把被標記的鏡頭標紅。
+    - **已知誤判**：貓身後有一櫃絨毛娃娃時，第一版把娃娃算成第二隻動物。prompt 已補上「絨毛玩具、公仔、印刷圖案、布料上的圖案都不算動物」，實測那張圖就正確回報 1 隻了。這類事情靠 prompt 定義用詞可以解，但不要指望它完美——它是給人看的警告，不是判決。
+    - 測試預設**關掉**這個檢查（`tests/conftest.py` 的 autouse fixture）：它要呼叫多模態模型、每顆鏡頭好幾秒，對「這幾顆鏡頭有沒有被渲染」的測試來說是純負擔。
   - **給非工程使用者的表單化 UI**：Pet Profile 不再只有 JSON textarea——`webapp/static/index.html` 現在是中文欄位表單（基本資料／健康狀態勾選／個性標籤 chip 編輯器／故事與領養條件／照片影片清單含縮圖／外觀特徵摺疊區），JSON 直編退居「進階」摺疊區（可「套用到上方表單」，但仍要按表單的儲存鈕才寫入 DB）。表單會保留 schema 中沒有對應 widget 的欄位再合併回去，不會靜默丟資料。**檔案路徑欄位改成用選的**：瀏覽器拿不到本機檔案的真實路徑，所以「從電腦選擇」＝開 OS 檔案對話框→上傳到 `storage/assets/<pet_id>/`→用存下來那份的相對路徑；新增 `POST /api/pets/{pet_id}/assets`（副檔名 allowlist、檔名淨化、同名不覆蓋、pet_id 先做字元檢查＋ `storage/assets/` 包含性檢查再查 DB）、`GET /api/pets/{pet_id}/assets`（列出已上傳檔案給下拉選單）、`GET /api/profile-files`（匯入表單改成下拉選單），照片縮圖走唯讀的 `/media` static mount。單鏡頭重生的「換素材」也從手打 asset_id 改成從該寵物素材下拉選。上傳需要先有 pet_id（新寵物要先存檔才能傳照片）。
 
 `GenerationJob` 現在是**開跑就建檔**：`start_generation_job()` 在慢工作開始前先寫一筆 `status=running`，結束時 `finish_generation_job()`（`done`＋ output_path/script_json）或 `fail_generation_job()`（`failed`＋錯誤原因）收尾，所以跑到一半崩潰／重啟不再是「完全沒紀錄」。狀態值是 `pipeline/models.py` 的 `JobStatus`（`running`／`done`／`failed`）。
@@ -123,7 +132,8 @@ alembic upgrade head                              # 套用
 - TTS：Coqui XTTS-v2（zero-shot voice cloning，需一段參考語音 wav）
 - 影片生成 I2V：**已接**（SVD／CogVideoX／Wan2.2，見上），只在明確指定 `animate_scenes`／`--animate` 時才用，預設仍是真實素材剪輯＋照片 Ken Burns（策略 A 優先，I2V 只補位）
 - 圖像生成（背景）：**已接**（ComfyUI ＋ SDXL ＋ BiRefNet，見上），同樣只在明確指定 `background_scenes`／`--background` 時才用；生成的是寵物以外的部分，寵物像素最後會貼回去
-- VLM／音樂生成：仍刻意省略，素材品質檢查靠人工選片
+- VLM：**已接**（`gemma3:12b` via Ollama），但目前只用在生成後的一致性檢查（見上），上傳素材的品質檢查仍然靠人工選片
+- 音樂生成：仍刻意省略
 - 任務編排：仍是同步流程，Celery/Temporal 留到規模需要時才導入；資料庫用 PostgreSQL（見上）
 - Provider Adapter：LLM/TTS/I2V 都已有具體實作（`providers/llm/`、`providers/tts/`、`providers/video/`），但都還是「呼叫端寫死選哪個 provider」，還沒有 Router／依內容敏感度或成本自動切換，留到後續 MVP 切片
 

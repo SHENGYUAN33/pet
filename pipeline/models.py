@@ -173,6 +173,13 @@ class SceneJob(Base):
     image_provider: Mapped[str | None] = mapped_column(String, nullable=True)
     background_mode: Mapped[str | None] = mapped_column(String, nullable=True)
     background_prompt: Mapped[str | None] = mapped_column(String, nullable=True)
+    # What a vision model saw in this shot's generated picture
+    # (pipeline/identity.py). NULL for the shots that were never generated —
+    # a Ken Burns pass over a photograph is the photograph, so there is
+    # nothing there for identity to drift from. Kept because the heaviest
+    # item in the QA score is whether the video still shows this animal, and
+    # a reviewer needs to see what was noticed and when.
+    identity_check: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     clip_path: Mapped[str | None] = mapped_column(String, nullable=True)
     error: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

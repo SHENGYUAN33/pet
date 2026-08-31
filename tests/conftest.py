@@ -2,8 +2,22 @@
 
 from __future__ import annotations
 
-from pipeline import pet_repo
+import pytest
+
+from pipeline import config, pet_repo
 from pipeline.profile import PetProfile
+
+
+@pytest.fixture(autouse=True)
+def _identity_check_off(monkeypatch):
+    """Keep the vision model out of the suite by default.
+
+    The identity check calls a local multimodal model and takes seconds per
+    generated shot, which is right for a real run and wrong for a test that
+    only cares whether the right scenes were rendered. Tests that are about
+    the check itself set it back on, or call pipeline/identity.py directly.
+    """
+    monkeypatch.setattr(config, "IDENTITY_CHECK_ENABLED", False)
 
 
 def completed_job(

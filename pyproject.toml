@@ -63,6 +63,7 @@ packages = [
     "providers.image",
     "providers.llm",
     "providers.tts",
+    "providers.vlm",
     "providers.video",
     "webapp",
 ]

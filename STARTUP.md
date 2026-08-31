@@ -50,7 +50,7 @@ docker compose up -d
 ```powershell
 ollama list
 ```
-能列出 `qwen2.5:7b-instruct` 等模型就代表沒問題。如果指令失敗（連不上），到工作列系統匣找 Ollama 圖示手動啟動，或重新安裝 Ollama 服務。
+能列出 `qwen2.5:7b-instruct`（寫腳本）與 `gemma3:12b`（生成後的一致性檢查）就代表沒問題。少了 `gemma3:12b` 不會擋住生成，只是每顆生成過的鏡頭會多一則「需要人工確認」的警告；不想要的話可以在 `.env` 設 `IDENTITY_CHECK_ENABLED=0`。如果指令失敗（連不上），到工作列系統匣找 Ollama 圖示手動啟動，或重新安裝 Ollama 服務。
 
 ### 4. 啟用 Python 虛擬環境
 **每個新開的終端機視窗都要做這一步**，不會自動記住。

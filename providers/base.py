@@ -149,3 +149,18 @@ class ImageEditingProvider(ABC):
         pet's species and the provider does not, so it is passed in;
         implementations that don't need it ignore it.
         """
+
+
+class VLMProvider(ABC):
+    """Looking at a picture and saying what is in it.
+
+    Used by the identity check (pipeline/identity.py): a shot whose picture
+    was generated has to be confirmed to still show this pet, and only this
+    pet. Kept as thin as LLMProvider.complete — prompt in, text out — so the
+    question being asked lives with the pipeline logic that knows what a
+    good answer is, not inside a vendor adapter.
+    """
+
+    @abstractmethod
+    def inspect_image(self, image_path: str, prompt: str) -> str:
+        """Return the model's raw answer about the image at image_path."""

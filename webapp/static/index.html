@@ -1489,6 +1489,14 @@ async function loadScenes(jobId) {
     try {
       const job = await api("/api/jobs/" + jobId);
       scenes = (job.script_json || {}).scenes || [];
+      // What the vision model saw in each generated shot lives on the scene
+      // rows, not in the script — merge it in so a reviewer picking a shot to
+      // redo can see which ones were flagged (pipeline/identity.py).
+      const identity = {};
+      for (const row of job.scene_jobs || []) {
+        if (row.identity_check) identity[row.scene_id] = row.identity_check;
+      }
+      for (const scene of scenes) scene._identity = identity[scene.scene_id] || null;
       sceneCache[jobId] = scenes;
     } catch (err) {
       host.innerHTML = "";
@@ -1519,6 +1527,15 @@ async function loadScenes(jobId) {
     // is the one the video has to disclose.
     meta.push(BACKGROUND_LABEL[(scene.background || {}).mode] || null);
     div.querySelector(".m").textContent = meta.filter(Boolean).join(" · ");
+
+    const identity = scene._identity;
+    if (identity && !identity.passed) {
+      const warn = document.createElement("div");
+      warn.className = "issue bad";
+      warn.style.marginTop = "6px";
+      warn.textContent = "⚠ " + (identity.issues || []).join("；");
+      div.querySelector(".txt").appendChild(warn);
+    }
     div.onclick = () => selectScene(scene, div);
     host.appendChild(div);
   }

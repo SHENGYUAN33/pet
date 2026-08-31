@@ -347,3 +347,116 @@ def test_ken_burns_samples_from_an_oversized_frame():
     assert PHOTO_SUPERSAMPLE > 1
     oversized = _fit_to_frame(PHOTO_SUPERSAMPLE)
     assert str(FRAME_WIDTH * PHOTO_SUPERSAMPLE) in oversized
+
+
+def test_a_frame_shaped_source_skips_the_blurred_backdrop(tmp_path):
+    """A generated background comes out at exactly the output ratio, so the
+    backdrop chain would blur an 8-megapixel frame and then cover every pixel
+    of it. FFmpeg was intermittently failing on that chain, on precisely the
+    shots where it was doing nothing."""
+    from pipeline.editing import FRAME_HEIGHT, FRAME_WIDTH, _fit_filter_for
+
+    portrait = tmp_path / "portrait.png"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c=gray:s={FRAME_WIDTH // 2}x{FRAME_HEIGHT // 2}:d=1",
+            "-frames:v",
+            "1",
+            str(portrait),
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    chain = _fit_filter_for(str(portrait))
+
+    assert "gblur" not in chain
+    assert "overlay" not in chain
+    assert f"scale={FRAME_WIDTH}:{FRAME_HEIGHT}" in chain
+
+
+def test_a_differently_shaped_source_still_gets_the_backdrop(tmp_path):
+    """The waste only exists when there is no leftover space; a landscape
+    photo still needs something in the bands."""
+    from pipeline.editing import _fit_filter_for
+
+    landscape = tmp_path / "landscape.png"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=gray:s=640x480:d=1",
+            "-frames:v",
+            "1",
+            str(landscape),
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    assert "gblur" in _fit_filter_for(str(landscape))
+
+
+def test_an_unreadable_source_falls_back_to_the_general_chain(tmp_path):
+    """Which of two correct chains to use is not worth losing a shot over."""
+    from pipeline.editing import _fit_filter_for
+
+    assert "gblur" in _fit_filter_for(str(tmp_path / "not-a-picture.png"))
+
+
+def test_a_still_is_decoded_once_rather_than_per_frame(tmp_path):
+    """`-loop 1` re-reads the file for every output frame — 150 times for a
+    six-second shot — and FFmpeg was intermittently failing there: decoder
+    errors on PNGs that decode cleanly on their own, and twice an access
+    violation that killed a run. Repeating one decoded frame removes the
+    mechanism instead of working around it."""
+    from pipeline.editing import PHOTO_LOOP_FILTER
+
+    photo = tmp_path / "photo.png"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=gray:s=640x480:d=1",
+            "-frames:v",
+            "1",
+            str(photo),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    out = tmp_path / "clip.mp4"
+
+    recorded = {}
+    real_run = subprocess.run
+
+    def capture(cmd, *args, **kwargs):
+        if cmd and cmd[0] == "ffmpeg":
+            recorded.setdefault("cmd", cmd)
+        return real_run(cmd, *args, **kwargs)
+
+    from pipeline import editing
+
+    editing.subprocess.run = capture
+    try:
+        build_scene_clip(
+            visual_path=str(photo), duration=1.0, subtitle_text="字幕", output_path=str(out)
+        )
+    finally:
+        editing.subprocess.run = real_run
+
+    cmd = recorded["cmd"]
+    assert "-loop" not in cmd
+    assert PHOTO_LOOP_FILTER in " ".join(cmd)
+    assert out.exists()

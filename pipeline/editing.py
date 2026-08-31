@@ -48,6 +48,82 @@ def _escape_filter_path(path: str) -> str:
     return path.replace("\\", "/").replace(":", "\\:")
 
 
+#: Repeat one decoded frame instead of re-reading the file per output frame.
+#:
+#: The obvious way to hold a still on screen is `-loop 1`, which re-decodes
+#: the same file once per frame — 150 times for a six-second shot. FFmpeg was
+#: intermittently failing exactly there: "inflate returned error -3" on PNGs
+#: that decode perfectly on their own (verified: identical checksum to
+#: ComfyUI's original, and a clean standalone decode), and twice an access
+#: violation that killed a run outright. Measured over five attempts each on
+#: the file that had just crashed a run: `-loop 1` produced decoder errors on
+#: three, this produced none.
+#:
+#: Decoding once and repeating the decoded frame removes the mechanism rather
+#: than working around it, and keeps the picture lossless — which switching
+#: the intermediate to JPEG (also measured clean) would not have.
+PHOTO_LOOP_FILTER = "loop=loop=-1:size=1"
+
+#: How far a source's aspect ratio may sit from the output frame's and still
+#: count as already the right shape. Generated pictures are produced at an
+#: exact 9:16 (config.BACKGROUND_WIDTH x BACKGROUND_HEIGHT), so this only has
+#: to absorb rounding, not judge near-misses.
+ASPECT_TOLERANCE = 0.002
+
+
+def probe_aspect_ratio(visual_path: str) -> float | None:
+    """Width over height of a source, or None if it cannot be read.
+
+    None rather than an exception: this only decides which of two correct
+    filter chains to use, so an unreadable header should fall through to the
+    general one rather than lose the shot.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height",
+                "-of",
+                "csv=p=0:s=x",
+                visual_path,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        width, height = result.stdout.strip().splitlines()[0].split("x")
+        return int(width) / int(height)
+    except Exception:  # noqa: BLE001 - boundary: an external tool on an arbitrary file
+        return None
+
+
+def _fit_filter_for(visual_path: str, multiplier: int = 1) -> str:
+    """The filter chain that puts this particular source into the frame.
+
+    A source already shaped like the frame has no leftover space, so the
+    blurred-backdrop chain below builds an 8-megapixel frame, blurs it with a
+    wide-radius gaussian, and overlays a picture that covers it completely —
+    every pixel of that work is thrown away. That is most photo shots once a
+    background has been generated, since generated pictures come out at
+    exactly the output ratio.
+
+    (This was also suspected of causing the intermittent FFmpeg crashes on
+    generated shots. It was not — see PHOTO_LOOP_FILTER below for what was —
+    but building and blurring eight megapixels per frame to cover every one
+    of them is worth not doing regardless.)
+    """
+    aspect = probe_aspect_ratio(visual_path)
+    frame_aspect = FRAME_WIDTH / FRAME_HEIGHT
+    if aspect is not None and abs(aspect - frame_aspect) < ASPECT_TOLERANCE:
+        return f"scale={FRAME_WIDTH * multiplier}:{FRAME_HEIGHT * multiplier}"
+    return _fit_to_frame(multiplier)
+
+
 def _fit_to_frame(multiplier: int = 1) -> str:
     """Filter chain putting any source into the 9:16 output frame.
 
@@ -113,12 +189,13 @@ def build_scene_clip(
     if is_photo:
         frames = max(int(duration * FRAME_RATE), 1)
         video_filter = (
-            f"{_fit_to_frame(PHOTO_SUPERSAMPLE)},"
+            f"{PHOTO_LOOP_FILTER},"
+            f"{_fit_filter_for(visual_path, PHOTO_SUPERSAMPLE)},"
             f"zoompan=z='min(zoom+0.0015,1.2)':d={frames}:s={FRAME_WIDTH}x{FRAME_HEIGHT}:fps={FRAME_RATE},"
         )
-        video_input = ["-loop", "1", "-i", visual_path]
+        video_input = ["-i", visual_path]
     else:
-        video_filter = f"{_fit_to_frame()},fps={FRAME_RATE},"
+        video_filter = f"{_fit_filter_for(visual_path)},fps={FRAME_RATE},"
         # Real clips are often shorter than the scene's assigned duration;
         # loop so -t below can always fill the full scene length.
         video_input = ["-stream_loop", "-1", "-i", visual_path]

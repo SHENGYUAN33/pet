@@ -38,6 +38,9 @@ class SceneTracker(Protocol):
         background_prompt: str | None,
     ) -> None: ...
 
+    def record_identity(self, scene_id: int, identity_check: dict) -> None:
+        """Store what a vision model saw in this shot's generated picture."""
+
     def finish_scene(self, scene_id: int, clip_path: str) -> None: ...
 
     def fail_scene(self, scene_id: int, error: str) -> None: ...
@@ -61,6 +64,8 @@ class NoopSceneTracker:
         background_mode: str | None,
         background_prompt: str | None,
     ) -> None: ...
+
+    def record_identity(self, scene_id: int, identity_check: dict) -> None: ...
 
     def finish_scene(self, scene_id: int, clip_path: str) -> None: ...
 
@@ -109,6 +114,9 @@ class DatabaseSceneTracker:
             background_mode=background_mode,
             background_prompt=background_prompt,
         )
+
+    def record_identity(self, scene_id: int, identity_check: dict) -> None:
+        pet_repo.record_scene_identity(self.job_id, scene_id, identity_check)
 
     def finish_scene(self, scene_id: int, clip_path: str) -> None:
         pet_repo.finish_scene_job(self.job_id, scene_id, clip_path=clip_path)

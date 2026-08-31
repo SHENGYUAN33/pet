@@ -249,9 +249,23 @@ def start_scene_job(
         scene.image_provider = image_provider
         scene.background_mode = background_mode
         scene.background_prompt = background_prompt
+        # A retry is a new picture, so last attempt's verdict no longer
+        # describes anything that exists.
+        scene.identity_check = None
         scene.clip_path = None
         scene.error = None
         scene.finished_at = None
+
+
+def record_scene_identity(job_id: int, scene_id: int, identity_check: dict) -> None:
+    """Attach what a vision model saw in this shot's generated picture.
+
+    Separate from finish_scene_job because the check runs before the clip is
+    finished, and because a shot that fails it is still a rendered shot —
+    the verdict is for the reviewer, not a reason to throw work away."""
+    with get_session() as session:
+        scene = _require_scene_job(session, job_id, scene_id)
+        scene.identity_check = identity_check
 
 
 def finish_scene_job(job_id: int, scene_id: int, *, clip_path: str) -> None:
@@ -303,6 +317,7 @@ def list_scene_jobs(job_id: int) -> list[dict]:
                 "image_provider": row.image_provider,
                 "background_mode": row.background_mode,
                 "background_prompt": row.background_prompt,
+                "identity_check": row.identity_check,
                 "clip_path": row.clip_path,
                 "error": row.error,
                 "finished_at": row.finished_at.isoformat() if row.finished_at else None,

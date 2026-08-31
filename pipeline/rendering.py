@@ -20,6 +20,7 @@ from pipeline.editing import (
     mux_video_audio,
 )
 from pipeline.i2v import animate_photo, get_video_provider
+from pipeline.identity import check_identity, get_vlm_provider
 from pipeline.montage import scene_sources
 from pipeline.narration import silence_scenes, synthesize_scenes
 from pipeline.profile import PetProfile
@@ -216,6 +217,33 @@ def render_script(
             background_provider = get_image_provider(image_provider)
         return background_provider
 
+    def verify_identity(scene_id: int, picture_path: str) -> None:
+        """Confirm a generated shot still shows this pet, and only this pet.
+
+        Runs on the picture that is about to become the shot rather than on
+        the finished clip, so the burned-in subtitle and disclosure are not
+        part of what the vision model is asked to read.
+
+        Reports, never blocks (see pipeline/identity.py): the verdict comes
+        from a local 7B model, and a shot it dislikes has still cost minutes
+        to make and may well be fine. It goes on the scene's record and into
+        the reviewer's warnings.
+        """
+        if not config.IDENTITY_CHECK_ENABLED:
+            return
+
+        on_progress(f"鏡頭 {index + 1}/{scene_count}：檢查畫面裡還是不是這隻寵物", scene_fraction)
+        result = check_identity(
+            picture_path,
+            get_vlm_provider(config.VLM_PROVIDER),
+            species=profile.species,
+            work_dir=work_dir,
+            scene_id=scene_id,
+        )
+        tracker.record_identity(scene_id, result.model_dump())
+        for issue in result.issues:
+            print(f"[WARNING] 鏡頭 {scene_id}：{issue}")
+
     def disclosure_for(background: SceneBackground | None) -> str | None:
         """The AI-generation label a shot has to carry, or None.
 
@@ -322,6 +350,12 @@ def render_script(
                     # as real footage (loop-if-short + crop, see
                     # pipeline/editing.py), which is what a raw I2V clip needs.
                     visual_path = i2v_path
+
+                # Only shots whose picture was generated: a Ken Burns pass
+                # over a photograph is the photograph, and there is nothing
+                # for identity to drift from.
+                if background is not None or animated:
+                    verify_identity(scene_id, str(visual_path))
 
                 build_scene_clip(
                     visual_path=str(visual_path),

@@ -319,3 +319,26 @@ BACKGROUND_FORBIDDEN_TERMS = tuple(
     ).split(",")
     if term.strip()
 )
+
+# --- 一致性檢查 / Identity consistency (docs/architecture.md §11) -------------
+# The heaviest item in the QA score (30%), and the only failure mode here that
+# a person spots instantly while no other check catches: the pet missing from
+# a generated shot, a second animal grown beside it, or an animal warped past
+# recognition by image-to-video.
+#
+# Runs on the shots whose picture was generated, because those are the only
+# ones where the animal can change — a Ken Burns shot of a photograph is the
+# photograph. Vision model on the same local Ollama server as the script LLM
+# (gemma3:12b is multimodal); measured about 4 seconds per shot, next to
+# minutes for the generation it is checking.
+OLLAMA_VLM_MODEL = os.getenv("OLLAMA_VLM_MODEL", "gemma3:12b")
+VLM_TIMEOUT_SECONDS = int(os.getenv("VLM_TIMEOUT_SECONDS", "180"))
+# Off switch for a machine without the vision model pulled, or for a batch
+# run where the seconds per shot are not wanted. It reports, never blocks, so
+# turning it off costs a warning rather than a video.
+IDENTITY_CHECK_ENABLED = os.getenv("IDENTITY_CHECK_ENABLED", "1").lower() not in {
+    "0",
+    "false",
+    "no",
+}
+VLM_PROVIDER = os.getenv("VLM_PROVIDER", "ollama")
