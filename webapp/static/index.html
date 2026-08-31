@@ -1239,6 +1239,11 @@ function renderJobs() {
   host.className = "";
   for (const job of visible) {
     const missing = ((job.disclosure_missing || {}).missing_restrictions) || [];
+    // Generated settings that would say something about the pet its Profile
+    // does not (see pipeline/fact_check.py). Shown separately from a missing
+    // disclosure because the fix is different: reword the background, not
+    // the narration.
+    const bgRisks = ((job.disclosure_missing || {}).background_risks) || [];
     const issues = ((job.structure_issues || {}).issues) || [];
     // Jobs are recorded from the moment a run starts, so a card can describe
     // a run that is still going or that died — only a finished one has a
@@ -1261,7 +1266,7 @@ function renderJobs() {
       done ? '<span class="badge">' + job.duration + "s · " + job.scene_count + " 鏡頭</span>" : "",
       cleaned ? '<span class="badge">🗑 已清理檔案</span>' : "",
       job.parent_job_id ? '<span class="badge">↺ 重生自 ' + job.parent_job_id + "</span>" : "",
-      done && !missing.length && !issues.length ? '<span class="badge ok">✓ 檢查通過</span>' : "",
+      done && !missing.length && !bgRisks.length && !issues.length ? '<span class="badge ok">✓ 檢查通過</span>' : "",
       '<span class="job-time">' + new Date(job.created_at).toLocaleString("zh-TW") + "</span>",
     ].join("");
     div.appendChild(top);
@@ -1276,6 +1281,12 @@ function renderJobs() {
       const d = document.createElement("div");
       d.className = "issue bad";
       d.textContent = "缺少揭露：" + missing.join("、");
+      div.appendChild(d);
+    }
+    if (bgRisks.length) {
+      const d = document.createElement("div");
+      d.className = "issue bad";
+      d.textContent = "生成背景可能暗示不實資訊：" + bgRisks.join("；");
       div.appendChild(d);
     }
     if (issues.length) {

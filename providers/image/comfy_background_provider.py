@@ -61,6 +61,9 @@ COMPOSITE = "12"
 MATTE_MODEL = "13"
 MATTE = "14"
 SUBJECT_TEXT = "17"
+MATTE_AS_IMAGE = "22"
+SCALED_MATTE_IMAGE = "23"
+SCALED_MATTE = "24"
 EMPTY_CANVAS_MASK = "20"
 PLACED_MATTE = "21"
 SOLID_MATTE = "16"
@@ -166,18 +169,24 @@ def probe_image_size(image_path: str) -> tuple[int, int]:
 def mask_coverage(mask_path: str) -> float:
     """Share of the frame a saved mask covers, 0.0-1.0.
 
-    Measured with FFmpeg rather than by loading the image, because FFmpeg is
-    already a hard requirement here while an imaging library is not (see
-    probe_image_size). Scaling the mask to a single pixel with area
-    resampling *is* the mean, so that one byte is the answer.
+    FFmpeg converts the mask to raw 8-bit grey and this averages the bytes.
+    Two shortcuts were tried first and both were wrong in ways that made the
+    check worse than useless:
 
-    Written to a file rather than read off a pipe: FFmpeg's signalstats
-    prints to stderr, and stderr came back empty when this ran inside the
-    full pipeline (something in the process had already made captured
-    output unavailable), which turned a working check into a crash. A file
-    the caller names cannot be taken away like that.
+    signalstats prints to stderr, and stderr came back empty when this ran
+    inside the full pipeline (something in that process had already made
+    captured output unavailable), turning a working check into a crash.
+
+    Scaling the mask to a single pixel and reading that byte looked like a
+    clean average and is not: a mask measured at 5.3% by signalstats read
+    back as 0.4%, roughly thirteen times too low, which made the guard below
+    reject perfectly good photographs. The scaler does not promise an
+    average over a 720x1280-to-1x1 reduction.
+
+    Averaging every byte is neither clever nor slow — a frame of this size
+    is under a megabyte — and it is exactly the number being asked for.
     """
-    raw_path = Path(mask_path).with_suffix(".coverage.raw")
+    raw_path = Path(mask_path).with_suffix(".gray.raw")
     subprocess.run(
         [
             "ffmpeg",
@@ -187,7 +196,7 @@ def mask_coverage(mask_path: str) -> float:
             "-i",
             mask_path,
             "-vf",
-            "format=gray,scale=1:1:flags=area",
+            "format=gray",
             "-f",
             "rawvideo",
             "-pix_fmt",
@@ -196,10 +205,10 @@ def mask_coverage(mask_path: str) -> float:
         ],
         check=True,
     )
-    average = raw_path.read_bytes()
-    if len(average) != 1:
-        raise RuntimeError(f"FFmpeg did not reduce {mask_path} to one pixel")
-    return average[0] / 255.0
+    pixels = raw_path.read_bytes()
+    if not pixels:
+        raise RuntimeError(f"FFmpeg produced no pixels for {mask_path}")
+    return sum(pixels) / len(pixels) / 255.0
 
 
 class ComfyBackgroundProvider(ImageEditingProvider):
@@ -323,17 +332,37 @@ class ComfyBackgroundProvider(ImageEditingProvider):
     def _matte_nodes(self, subject: str, margins: OutpaintMargins) -> dict:
         """Nodes producing a mask of the pet on the full frame-sized canvas.
 
-        Segmentation runs on the *scaled* photo, before the frame padding is
-        added, and the resulting mask is then placed onto an empty canvas at
-        the same offset. Running it after the padding cost SAM3 the subject
-        entirely: a clearly visible cat measured 2.4% of the frame on the
-        scaled photo and 0.0% once the grey bars were around it (measured on
-        a real asset — the bars are not something a photo ever has, so the
-        detector is being shown an image unlike anything it was trained on).
-        The two paths both end at PLACED_MATTE output 0, so the rest of the
+        Segmentation runs on the photograph as uploaded — full resolution, no
+        frame padding — and the mask it returns is then shrunk and placed
+        where the photo will sit on the canvas. Both of those matter, and
+        both were measured on the same real asset: a cat that segmented fine
+        at full size came back as 0.0% of the frame once the grey padding
+        bars were around it (a photo never has those, so the detector was
+        being shown something unlike its training data), and 0.0% again when
+        the photo was merely downscaled first (the animal was small in a
+        cluttered room, and the detail it needed was gone).
+
+        Both backends end at PLACED_MATTE output 0, so the rest of the
         replace graph does not care which one ran.
         """
         placement = {
+            MATTE_AS_IMAGE: {"class_type": "MaskToImage", "inputs": {"mask": [MATTE, 0]}},
+            SCALED_MATTE_IMAGE: {
+                "class_type": "ImageScale",
+                "inputs": {
+                    "image": [MATTE_AS_IMAGE, 0],
+                    "upscale_method": "bilinear",
+                    "width": margins.fit_width,
+                    "height": margins.fit_height,
+                    "crop": "disabled",
+                },
+            },
+            SCALED_MATTE: {
+                "class_type": "ImageToMask",
+                # The mask was written to all three channels by MaskToImage;
+                # any one of them reads it back.
+                "inputs": {"image": [SCALED_MATTE_IMAGE, 0], "channel": "red"},
+            },
             EMPTY_CANVAS_MASK: {
                 "class_type": "SolidMask",
                 "inputs": {
@@ -346,7 +375,7 @@ class ComfyBackgroundProvider(ImageEditingProvider):
                 "class_type": "MaskComposite",
                 "inputs": {
                     "destination": [EMPTY_CANVAS_MASK, 0],
-                    "source": [MATTE, 0],
+                    "source": [SCALED_MATTE, 0],
                     "x": margins.left,
                     "y": margins.top,
                     # The canvas is empty, so adding the matte onto it is a
@@ -365,7 +394,7 @@ class ComfyBackgroundProvider(ImageEditingProvider):
                 },
                 MATTE: {
                     "class_type": "RemoveBackground",
-                    "inputs": {"bg_removal_model": [MATTE_MODEL, 0], "image": [SCALE, 0]},
+                    "inputs": {"bg_removal_model": [MATTE_MODEL, 0], "image": [LOAD_IMAGE, 0]},
                 },
                 **placement,
             }
@@ -385,7 +414,7 @@ class ComfyBackgroundProvider(ImageEditingProvider):
                 "class_type": "SAM3_Detect",
                 "inputs": {
                     "model": [MATTE_MODEL, 0],
-                    "image": [SCALE, 0],
+                    "image": [LOAD_IMAGE, 0],
                     "conditioning": [SUBJECT_TEXT, 0],
                     "threshold": config.BACKGROUND_SAM3_THRESHOLD,
                     "refine_iterations": config.BACKGROUND_SAM3_REFINE_ITERATIONS,

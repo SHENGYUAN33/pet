@@ -5,7 +5,7 @@ import uuid
 
 from pipeline import config
 from pipeline.background import BackgroundMode
-from pipeline.fact_check import find_missing_disclosures
+from pipeline.fact_check import find_background_risks, find_missing_disclosures
 from pipeline.pet_repo import (
     fail_generation_job,
     finish_generation_job,
@@ -156,11 +156,17 @@ def _render_revision(
     """The body of regenerate_scene() — split out so the job row is closed as
     FAILED by exactly one except clause."""
     missing = find_missing_disclosures(script, profile)
+    background_risks = find_background_risks(script)
     structure_issues = validate_script_structure(script)
-    script["_disclosure_check"] = {"missing_restrictions": missing}
+    script["_disclosure_check"] = {
+        "missing_restrictions": missing,
+        "background_risks": background_risks,
+    }
     script["_structure_check"] = {"issues": structure_issues}
     if missing:
         print(f"[WARNING] may be missing required disclosure(s): {missing}")
+    for risk in background_risks:
+        print(f"[WARNING] {risk}")
     if structure_issues:
         print(f"[WARNING] structural issues: {structure_issues}")
 
@@ -170,6 +176,7 @@ def _render_revision(
         script_json=script,
         work_dir=str(work_dir),
         disclosure_missing=missing,
+        background_risks=background_risks,
         structure_issues=structure_issues,
     )
 

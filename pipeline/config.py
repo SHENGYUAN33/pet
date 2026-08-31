@@ -217,13 +217,13 @@ BACKGROUND_SUBJECT_FALLBACK = os.getenv("BACKGROUND_SUBJECT_FALLBACK", "pet")
 # the wrong answer there; the run stops and says which asset it was, which
 # also happens to be how a reviewer finds out an asset isn't of this pet.
 #
-# Deliberately tiny, because this separates "found nothing" from "found
-# something", not "good shot" from "bad shot". A cat far away in a cluttered
-# room measured 0.4% here — a poor shot to replace the background of, but it
-# really is the cat, and refusing it would be the code overruling a judgement
-# that belongs to the reviewer looking at the result. Under 0.2% of a
-# 720x1280 frame is under two thousand pixels: a speck, not a pet.
-BACKGROUND_MIN_SUBJECT_COVERAGE = float(os.getenv("BACKGROUND_MIN_SUBJECT_COVERAGE", "0.002"))
+# This separates "found nothing" from "found something", not "good shot"
+# from "bad shot" — how well a small subject replaces is a judgement for the
+# person looking at the result. Measured on real assets: a photo without the
+# animal gives exactly 0.0%, while even a cat far away in a cluttered room
+# gives about 4%. Anything in between is a comfortable place to draw the
+# line.
+BACKGROUND_MIN_SUBJECT_COVERAGE = float(os.getenv("BACKGROUND_MIN_SUBJECT_COVERAGE", "0.005"))
 # BiRefNet matting weights, in vendor/comfyui/models/background_removal/
 # (Comfy-Org/BiRefNet). Used only when BACKGROUND_MATTE_BACKEND is birefnet.
 BACKGROUND_MATTE_MODEL_FILE = os.getenv("BACKGROUND_MATTE_MODEL_FILE", "birefnet.safetensors")
@@ -296,3 +296,26 @@ BACKGROUND_NEGATIVE_PROMPT = os.getenv(
 # there, and labelling a filled margin would dilute the label where it
 # matters.
 BACKGROUND_DISCLOSURE_TEXT = os.getenv("BACKGROUND_DISCLOSURE_TEXT", "部分畫面由 AI 創意生成")
+# Words that must not appear in a generated setting, checked by
+# pipeline/fact_check.py before a script is accepted.
+#
+# A replaced background is a creative choice, but it still makes a claim: a
+# living room with a child in it says this animal is good with children, a
+# clinic says something about its health, and neither may be true. Nobody
+# promised them, and the Pet Profile is the only thing allowed to say what
+# is true of this pet. The other animals on the list are there for a second
+# reason too — naming one in the prompt makes the model paint one, so the
+# video ends up with an animal that does not exist beside the real one.
+#
+# English because the prompts are (see BACKGROUND_DEFAULT_PROMPT), matched
+# on whole words so "human" doesn't fire on "humid".
+BACKGROUND_FORBIDDEN_TERMS = tuple(
+    term.strip()
+    for term in os.getenv(
+        "BACKGROUND_FORBIDDEN_TERMS",
+        "person,people,human,child,children,kid,kids,boy,girl,man,woman,family,owner,hands,"
+        "cat,cats,kitten,dog,dogs,puppy,pet,pets,animal,animals,bird,rabbit,"
+        "vet,veterinary,clinic,hospital,medical,surgery",
+    ).split(",")
+    if term.strip()
+)

@@ -61,7 +61,7 @@
 
 素材組成建議比例（避免一開始做「完全生成式影片」）：60% 真實影片剪輯 / 20% 照片動態化 / 10% 字幕與貼圖 / 10% AI 生成場景。
 
-目前所在階段：**MVP 開發中（第四個切片：AI 背景生成〔背景延伸＋背景置換〕完成，CLI only）**。
+目前所在階段：**MVP 開發中（第五個切片：背景進入腳本層，一支影片的場景會照故事線推進）**。
 
 - 第一個切片（多寵物管理／PostgreSQL 資料層）：`pipeline/db.py`／`pipeline/models.py`／`pipeline/pet_repo.py`，管理 CLI `pipeline/manage.py`（`init-db`／`import-profile`／`list-pets`／`show-pet`）
 - 第二個切片（分鏡編輯／單鏡頭重生）：渲染邏輯抽到 `pipeline/rendering.py`（`render_script`，`generate_video` 與 `regenerate_scene` 共用，不重複寫一次），每次生成都在 `storage/output/<pet_id>/gen_<8碼token>/` 有自己的子資料夾（不再共用同一層、不會互相覆蓋鏡頭檔案）。`pipeline/regen.py` 提供 `apply_scene_overrides`（純函式）＋ `regenerate_scene`（patch 單一鏡頭素材/字幕/旁白後只重新渲染，不重跑 LLM），CLI 是 `pipeline/regenerate.py`。`GenerationJob` 現在存完整 `script_json`，`parent_job_id` 把重新生成的版本連回原始 job——**每次重生都是新的一筆紀錄，不覆蓋舊的**，原始輸出檔案與紀錄都保留供追溯。
@@ -89,7 +89,15 @@
     - 實測（RTX 5070 Ti 16GB）：一張 720x1280、25 步，約 **8 秒**（模型已載入），比 Wan2.2 的 8 分鐘便宜兩個數量級。
     - **replace 會擋下「照片裡根本沒有這隻動物」的情況**：跟 SAM3 要 cat 而照片裡沒有貓，它正確地回傳空遮罩，接著取樣器就會把**整個畫面**重畫——產出一支「草地很漂亮但沒有寵物」的領養影片（實測踩到：有人把一張路人的圖庫照片加進了 Profile 的素材清單）。所以 provider 會把主體遮罩存成 `<輸出>.mask.png`，用 FFmpeg `signalstats` 量它佔畫面的比例，低於 `config.BACKGROUND_MIN_SUBJECT_COVERAGE` 就**直接讓這顆鏡頭失敗並指名是哪個素材**。這順便也是「這張照片不是這隻寵物」的檢查。
     - **replace 的已知限制**：原本躺在床上/架子上的寵物換到草地後會「浮」在半空，因為姿勢與新地面的透視對不上，也沒有接觸陰影——用**模糊/淺景深的場景**明顯比有清楚地面的場景安全。（另一個「連貓跳台一起去背」的問題已由 SAM3 解掉。）另外 replace 會**把爛照片的缺陷放大**：隔著玻璃拍、本身就霧霧的照片，切出來貼到乾淨的生成場景上會更明顯。
-    - 還沒做的：腳本 schema 的 `story_arc`／`art_direction`／per-scene `background`（讓多個鏡頭的背景構成一條故事線而不是各自為政）、fact-check 納入背景 prompt、QA 對生成背景鏡頭的標記、網頁端。
+  - **背景進入腳本層（第五個切片）**：這是「有故事性」真正落地的地方。上一個切片裡整支片共用一句 prompt，所以背景是「同一個場景重複六次」，不是一條故事線。現在**每個鏡頭自己帶背景**，由腳本 LLM 一起產生：
+    - script schema 新增 `story_arc`（全片一句話的場景走向）、`art_direction`（全片共用的視覺風格，英文）、以及每個 scene 的 `background: {mode, prompt}`。`mode` 是 `keep`／`extend`／`replace`（`pipeline/background.py` 的 `BackgroundMode`，新增了 `keep`）。範例見 [docs/schemas/script.example.json](docs/schemas/script.example.json)。
+    - **`art_direction` 會被接到每一個鏡頭的 prompt 後面**（`resolve_scene_background`），這是讓六個鏡頭看起來像同一支片而不是六支的關鍵；鏡頭自己的描述在前，風格在後。
+    - **決定順序**：CLI 的 `--background-scenes` 指名的鏡頭 > 腳本自己的 `background` 區塊 > 什麼都不做。理由是前者是「審核的人在修某一顆鏡頭」，那必須壓過腳本的決定。純函式 `resolve_scene_background()` 就是這條規則，測試在 `tests/test_scene_backgrounds.py`。
+    - **腳本 prompt 新增的規則**（`pipeline/script_gen.py`）：影片素材一律 `keep`；prompt 一律英文；`extend` 描述整張畫面、`replace` 只描述場景且**不可提到任何動物**；`replace` 優先選散景/淺景深（有清楚地面的場景會讓寵物看起來浮在半空）；各鏡頭 prompt 不可重複；至少要有一個鏡頭是 `keep` 或 `extend`。實測 Qwen2.5-7B 能穩定產出這個結構。
+    - **fact-check 納入背景**（`find_background_risks()`）：`replace` 的場景是創作，但它仍然在宣稱事情——畫面裡有小孩等於宣稱這隻寵物親近小孩，出現診所等於宣稱健康狀況，Profile 都沒說過。禁用字清單在 `config.BACKGROUND_FORBIDDEN_TERMS`（整個字比對，`human` 不會誤中 `humid`）。只檢查 `replace`：`extend` 延續的是相機真的拍到的東西。
+    - **QA 新增三項**（`pipeline/qa.py`）：未知的 mode、要了處理卻沒寫描述、以及**多個鏡頭共用同一句背景描述**（那就是舊的單一 prompt 行為套上新 schema）、整支片每顆鏡頭都是 `replace`（領養影片至少要有一顆是牠真正待過的地方）。
+    - 生成紀錄：`disclosure_missing` 這個 JSONB 現在存兩個 key（`missing_restrictions`／`background_risks`），兩者分開是因為修法不同——一個要改旁白，一個要改背景描述。網頁的版本卡片會分開顯示。**沒有 migration**：欄位本來就是 JSONB。
+    - 還沒做的：網頁端的背景欄位（現在只能用 CLI 指定 override，腳本自己產的背景則已經會生效）、VLM 的 Identity Consistency 檢查。
   - **給非工程使用者的表單化 UI**：Pet Profile 不再只有 JSON textarea——`webapp/static/index.html` 現在是中文欄位表單（基本資料／健康狀態勾選／個性標籤 chip 編輯器／故事與領養條件／照片影片清單含縮圖／外觀特徵摺疊區），JSON 直編退居「進階」摺疊區（可「套用到上方表單」，但仍要按表單的儲存鈕才寫入 DB）。表單會保留 schema 中沒有對應 widget 的欄位再合併回去，不會靜默丟資料。**檔案路徑欄位改成用選的**：瀏覽器拿不到本機檔案的真實路徑，所以「從電腦選擇」＝開 OS 檔案對話框→上傳到 `storage/assets/<pet_id>/`→用存下來那份的相對路徑；新增 `POST /api/pets/{pet_id}/assets`（副檔名 allowlist、檔名淨化、同名不覆蓋、pet_id 先做字元檢查＋ `storage/assets/` 包含性檢查再查 DB）、`GET /api/pets/{pet_id}/assets`（列出已上傳檔案給下拉選單）、`GET /api/profile-files`（匯入表單改成下拉選單），照片縮圖走唯讀的 `/media` static mount。單鏡頭重生的「換素材」也從手打 asset_id 改成從該寵物素材下拉選。上傳需要先有 pet_id（新寵物要先存檔才能傳照片）。
 
 `GenerationJob` 現在是**開跑就建檔**：`start_generation_job()` 在慢工作開始前先寫一筆 `status=running`，結束時 `finish_generation_job()`（`done`＋ output_path/script_json）或 `fail_generation_job()`（`failed`＋錯誤原因）收尾，所以跑到一半崩潰／重啟不再是「完全沒紀錄」。狀態值是 `pipeline/models.py` 的 `JobStatus`（`running`／`done`／`failed`）。
@@ -133,6 +141,7 @@ alembic upgrade head                              # 套用
 - 每個生成的影片都須保留「素材與生成紀錄」（用了哪些 provider、prompt、seed、模型版本、審核結果），供事後追溯與合規查核
 - 人工審核層的退回機制須能標記「單一鏡頭重新生成」，不必整支影片重跑
 - 腳本/分鏡一律走結構化 JSON（見 docs/schemas/），不要用純文字文案當作腳本的唯一表示
+- 畫面上的創作決定要寫在腳本裡，不要只當成呼叫參數：背景怎麼處理是分鏡的一部分，寫進 script JSON 才會被 fact-check、QA、續跑、單鏡頭重生一起帶著走
 - 專案已有 `pyproject.toml`（`pytest` ＋ `ruff`，可選 extras：`dev`／`web`／`i2v`），指令見下方「常用指令」；尚未有 `package.json`（前端目前是無建置流程的純 HTML/JS）
 
 ## Rules & Constraints

@@ -86,7 +86,7 @@ def start_generation_job(
             background_mode=background_mode,
             image_provider=image_provider,
             background_prompt=background_prompt,
-            disclosure_missing={"missing_restrictions": []},
+            disclosure_missing={"missing_restrictions": [], "background_risks": []},
             structure_issues={"issues": []},
             script_json={},
         )
@@ -104,6 +104,7 @@ def record_job_script(
     work_dir: str,
     disclosure_missing: list[str],
     structure_issues: list[str],
+    background_risks: list[str] | None = None,
 ) -> None:
     """Attach the chosen script and its render directory partway through the
     run, before the slow scene rendering starts.
@@ -115,7 +116,13 @@ def record_job_script(
         job = _require_job(session, job_id)
         job.script_json = script_json
         job.work_dir = work_dir
-        job.disclosure_missing = {"missing_restrictions": disclosure_missing}
+        # Two kinds of fact problem, kept apart because the fix differs:
+        # a missing disclosure is fixed in the narration, a risky generated
+        # setting is fixed by rewording the background.
+        job.disclosure_missing = {
+            "missing_restrictions": disclosure_missing,
+            "background_risks": background_risks or [],
+        }
         job.structure_issues = {"issues": structure_issues}
 
 

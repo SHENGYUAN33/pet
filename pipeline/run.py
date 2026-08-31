@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pipeline import config
 from pipeline.background import BackgroundMode
-from pipeline.fact_check import find_missing_disclosures
+from pipeline.fact_check import find_background_risks, find_missing_disclosures
 from pipeline.models import JobStatus
 from pipeline.montage import append_recap_scene
 from pipeline.pet_repo import (
@@ -149,15 +149,22 @@ def _run_generation(
     scripts_dir.mkdir(parents=True, exist_ok=True)
 
     selected_missing: list[str] = []
+    selected_background_risks: list[str] = []
     selected_structure_issues: list[str] = []
     for name, s in scripts.items():
         missing = find_missing_disclosures(s, profile)
-        s["_disclosure_check"] = {"missing_restrictions": missing}
+        background_risks = find_background_risks(s)
+        s["_disclosure_check"] = {
+            "missing_restrictions": missing,
+            "background_risks": background_risks,
+        }
         if missing:
             print(
                 f"[WARNING] style={name!r} may be missing required disclosure(s): {missing} "
                 "— review before this script is approved for publish."
             )
+        for risk in background_risks:
+            print(f"[WARNING] style={name!r} {risk}")
 
         structure_issues = validate_script_structure(s)
         s["_structure_check"] = {"issues": structure_issues}
@@ -166,6 +173,7 @@ def _run_generation(
 
         if name == style:
             selected_missing = missing
+            selected_background_risks = background_risks
             selected_structure_issues = structure_issues
 
         (scripts_dir / f"{name}.json").write_text(
@@ -190,6 +198,7 @@ def _run_generation(
         script_json=script,
         work_dir=str(work_dir),
         disclosure_missing=selected_missing,
+        background_risks=selected_background_risks,
         structure_issues=selected_structure_issues,
     )
 

@@ -375,3 +375,75 @@ def test_replace_is_told_which_animal_to_keep(photo_profile, tmp_path, monkeypat
     )
 
     assert [call["subject"] for call in provider.calls] == [photo_profile.species]
+
+
+def test_each_scene_gets_the_treatment_its_script_asked_for(photo_profile, tmp_path, monkeypatch):
+    """The whole point of moving backgrounds into the script: one video can
+    keep one shot as photographed, extend another and replace a third."""
+    provider = FakeBackgroundProvider()
+    monkeypatch.setattr("pipeline.rendering.get_image_provider", lambda name: provider)
+
+    script = {
+        "style": "cute",
+        "art_direction": "warm afternoon light",
+        "scenes": [
+            {
+                "scene_id": 1,
+                "start": 0,
+                "end": 3,
+                "visual_source": "IMG-001",
+                "subtitle": "一",
+                "background": {"mode": "keep", "prompt": None},
+            },
+            {
+                "scene_id": 2,
+                "start": 3,
+                "end": 6,
+                "visual_source": "IMG-001",
+                "subtitle": "二",
+                "background": {"mode": "extend", "prompt": "a cat indoors"},
+            },
+            {
+                "scene_id": 3,
+                "start": 6,
+                "end": 9,
+                "visual_source": "IMG-001",
+                "subtitle": "三",
+                "background": {"mode": "replace", "prompt": "a sunny park"},
+            },
+        ],
+    }
+
+    work_dir = tmp_path / "work"
+    render_script(photo_profile, script, work_dir)
+
+    assert [call["mode"] for call in provider.calls] == ["extend", "replace"]
+    assert not (work_dir / "scene_1_bg.png").exists(), "keep shows the photograph"
+
+    # The film-wide look rides along with each shot's own description.
+    assert provider.calls[0]["prompt"] == "a cat indoors, warm afternoon light"
+    assert provider.calls[1]["prompt"] == "a sunny park, warm afternoon light"
+
+    # Only the invented setting is labelled.
+    assert not (work_dir / "scene_2.disclosure.txt").exists()
+    assert (work_dir / "scene_3.disclosure.txt").exists()
+
+
+def test_a_named_scene_overrides_what_the_script_chose(photo_profile, tmp_path, monkeypatch):
+    """A reviewer correcting one shot has to win over the script."""
+    provider = FakeBackgroundProvider()
+    monkeypatch.setattr("pipeline.rendering.get_image_provider", lambda name: provider)
+
+    script = _script_with_one_photo_scene()
+    script["scenes"][0]["background"] = {"mode": "keep", "prompt": None}
+
+    render_script(
+        photo_profile,
+        script,
+        tmp_path / "work",
+        background_scenes={1},
+        background_mode=BackgroundMode.REPLACE,
+        background_prompt="a sunny park",
+    )
+
+    assert [call["mode"] for call in provider.calls] == ["replace"]

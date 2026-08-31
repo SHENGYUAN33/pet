@@ -5,6 +5,8 @@
   "target_audience": "喜歡戶外活動的單身或小家庭",
   "duration": 30,
   "language": "zh-TW",
+  "story_arc": "從收容所的籠子，到公園草地，最後是有陽光的家",
+  "art_direction": "warm afternoon light, shallow depth of field, soft blurred background, realistic photograph",
   "scenes": [
     {
       "scene_id": 1,
@@ -16,7 +18,11 @@
       "visual_instruction": "選取豆豆歪頭看鏡頭的片段",
       "narration": "嗨，先別滑走，我等你好久了！",
       "subtitle": "先別滑走！我在等你",
-      "music_mood": "playful"
+      "music_mood": "playful",
+      "background": {
+        "mode": "keep",
+        "prompt": null
+      }
     },
     {
       "scene_id": 2,
@@ -28,7 +34,11 @@
       "visual_instruction": "正面照，輕微搖尾動態化",
       "narration": "我是豆豆，今年兩歲，是個超愛撒嬌的小男生。",
       "subtitle": "我是豆豆，兩歲，超愛撒嬌",
-      "music_mood": "playful"
+      "music_mood": "playful",
+      "background": {
+        "mode": "extend",
+        "prompt": "a dog resting indoors by a window, warm daylight"
+      }
     },
     {
       "scene_id": 3,
@@ -40,7 +50,11 @@
       "visual_instruction": "玩球片段",
       "narration": "我最喜歡陪人玩球，也會安靜坐在你旁邊。",
       "subtitle": "最愛玩球，也很安靜乖巧",
-      "music_mood": "warm"
+      "music_mood": "warm",
+      "background": {
+        "mode": "keep",
+        "prompt": null
+      }
     },
     {
       "scene_id": 4,
@@ -53,7 +67,11 @@
       "narration": "下班回家時，我會第一個跑來迎接你。",
       "subtitle": "我會第一個跑來迎接你",
       "music_mood": "warm",
-      "ai_generated_disclosure": true
+      "ai_generated_disclosure": true,
+      "background": {
+        "mode": "replace",
+        "prompt": "a blurred living room by a sunlit window, bokeh"
+      }
     },
     {
       "scene_id": 5,
@@ -66,7 +84,11 @@
       "narration": "我已經完成健康檢查，也會乖乖使用尿墊。",
       "subtitle": "已完成健康檢查｜已結紮",
       "music_mood": "calm",
-      "required_disclosure": "不建議與小型動物共居"
+      "required_disclosure": "不建議與小型動物共居",
+      "background": {
+        "mode": "extend",
+        "prompt": "a dog sitting indoors, plain wall behind, soft light"
+      }
     },
     {
       "scene_id": 6,
@@ -78,7 +100,11 @@
       "visual_instruction": "注視鏡頭特寫，疊加名字與聯絡資訊",
       "narration": "可以給我一個家嗎？點擊了解我的故事。",
       "subtitle": "點擊了解豆豆的故事",
-      "music_mood": "emotional_cta"
+      "music_mood": "emotional_cta",
+      "background": {
+        "mode": "keep",
+        "prompt": null
+      }
     }
   ],
   "cta": "點擊查看豆豆的領養資訊",

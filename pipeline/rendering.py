@@ -4,7 +4,13 @@ from pathlib import Path
 
 from pipeline import config
 from pipeline.audio_mix import mix_narration_with_music
-from pipeline.background import BackgroundMode, apply_background, get_image_provider
+from pipeline.background import (
+    BackgroundMode,
+    SceneBackground,
+    apply_background,
+    get_image_provider,
+    resolve_scene_background,
+)
 from pipeline.editing import (
     PHOTO_EXTENSIONS,
     build_recap_clip,
@@ -95,25 +101,23 @@ def render_script(
     rather than a per-scene mapping, since callers only ever animate one
     scene at a time today (pipeline.regen.regenerate_scene).
 
-    background_scenes (pipeline/background.py): scene_ids whose photo gets a
-    generated background — the margin filled in (EXTEND) or the whole setting
-    replaced (REPLACE), per background_mode. Only meaningful for
-    photo-sourced scenes, and applied *before* animation, so a scene listed
-    in both is animated from the finished picture rather than from the
-    original. REPLACE additionally burns the AI-generation disclosure into
-    those shots (docs/architecture.md §5 strategy C) — an invented setting
-    has to be visible as one, and doing it here rather than leaving it to
-    the caller means it cannot be forgotten.
+    Backgrounds (pipeline/background.py) come from the script: each scene
+    may carry a `background` block saying whether to keep the photograph as
+    it is, fill in the empty frame margin (EXTEND), or replace the setting
+    entirely (REPLACE), with its own description. That is what lets a video
+    move through places — a cage, then a street, then a home — rather than
+    repeating one setting six times. The script's `art_direction` is added
+    to every one of those descriptions, which is what keeps the shots
+    looking like one film.
 
-    background_prompt describes what to generate, for every listed scene. It
-    must be English, and what it should describe depends on the mode: the
-    whole picture for EXTEND (the margin has to continue the photo), the
-    setting alone for REPLACE (the animal is already there, and asking for
-    one paints a second — measured). See pipeline/config.py's
-    BACKGROUND_DEFAULT_PROMPT. Like animate_prompt it is one shared string
-    rather than a per-scene mapping, because nothing above this layer
-    produces per-scene wording yet — that arrives when the script itself
-    starts carrying a setting per shot.
+    background_scenes/background_mode/background_prompt override the script
+    for the scene_ids named, and are what a reviewer correcting one shot
+    uses. Only meaningful for photo-sourced scenes either way, and applied
+    *before* animation, so a scene doing both is animated from the finished
+    picture rather than from the original. REPLACE additionally burns the
+    AI-generation disclosure into those shots (docs/architecture.md §5
+    strategy C) — an invented setting has to be visible as one, and doing it
+    here rather than leaving it to the caller means it cannot be forgotten.
 
     on_progress reports which stage is running (see pipeline/progress.py);
     the CLI leaves it at the no-op default, the web UI uses it to drive a
@@ -127,8 +131,20 @@ def render_script(
     database dependency."""
     work_dir.mkdir(parents=True, exist_ok=True)
     animate_scenes = animate_scenes or set()
-    background_scenes = background_scenes or set()
     tracker = scene_tracker or NoopSceneTracker()
+
+    # Settled once, here, so the preflight below and the render loop cannot
+    # disagree about which shots are getting a generated background.
+    backgrounds = {
+        scene["scene_id"]: resolve_scene_background(
+            scene,
+            art_direction=script.get("art_direction"),
+            override_scenes=background_scenes,
+            override_mode=background_mode,
+            override_prompt=background_prompt,
+        )
+        for scene in script["scenes"]
+    }
 
     # Which scenes a resumed run can skip, decided once so the check below and
     # the render loop agree on it.
@@ -141,7 +157,7 @@ def render_script(
     # whose clip is being reused aren't checked — their source may legitimately
     # have been removed since that clip was produced.
     will_animate = False
-    will_generate_background = False
+    background_modes: set[BackgroundMode] = set()
     for scene in script["scenes"]:
         if reusable_clips[scene["scene_id"]] is not None:
             continue
@@ -150,8 +166,9 @@ def render_script(
             continue
         if scene["scene_id"] in animate_scenes:
             will_animate = True
-        if scene["scene_id"] in background_scenes:
-            will_generate_background = True
+        background = backgrounds[scene["scene_id"]]
+        if background is not None:
+            background_modes.add(background.mode)
 
     # Same reasoning one step further out: if any scene still needs I2V, make
     # sure the provider can actually be reached before the narration pass,
@@ -162,12 +179,14 @@ def render_script(
     if will_animate:
         on_progress(f"檢查 {video_provider} 影片生成服務", 0.0)
         get_video_provider(video_provider).preflight()
-    if will_generate_background:
+    if background_modes:
         on_progress(f"檢查 {image_provider} 背景生成服務", 0.0)
-        # The mode is passed through because the two treatments need
-        # different models installed — checking for the matting weights a
-        # margin-only run never loads would refuse work that would succeed.
-        get_image_provider(image_provider).preflight(mode=background_mode.value)
+        provider = get_image_provider(image_provider)
+        # Checked per mode actually used, because the two treatments need
+        # different models installed: demanding the matting weights for a run
+        # that only fills margins would refuse work that would have succeeded.
+        for mode in sorted(background_modes, key=lambda m: m.value):
+            provider.preflight(mode=mode.value)
 
     if voice_sample:
         on_progress("產生旁白配音（TTS）", 0.0)
@@ -197,14 +216,14 @@ def render_script(
             background_provider = get_image_provider(image_provider)
         return background_provider
 
-    def disclosure_for(generated_background: bool) -> str | None:
+    def disclosure_for(background: SceneBackground | None) -> str | None:
         """The AI-generation label a shot has to carry, or None.
 
         Only a replaced setting earns it: with EXTEND nothing the camera saw
         is replaced, and labelling a filled-in margin would wear the label
         out where it actually matters.
         """
-        if generated_background and background_mode is BackgroundMode.REPLACE:
+        if background is not None and background.mode is BackgroundMode.REPLACE:
             return config.BACKGROUND_DISCLOSURE_TEXT
         return None
 
@@ -228,12 +247,12 @@ def render_script(
         visual_paths = _resolve_scene_visuals(profile, scene)
         single_photo = _is_single_photo(visual_paths)
         animated = scene_id in animate_scenes and single_photo
-        generated_background = scene_id in background_scenes and single_photo
+        background = backgrounds[scene_id] if single_photo else None
         # Named after the step that runs *first*, since a scene doing both
         # spends its opening minutes on the background; the animation step
         # re-reports itself when it takes over.
-        if generated_background:
-            step = f"：{image_provider} 生成背景中"
+        if background is not None:
+            step = f"：{image_provider} 生成{background.mode.value}背景中"
         elif animated:
             step = f"：{video_provider} 動態化中（比較久）"
         else:
@@ -245,9 +264,9 @@ def render_script(
             visual_source=", ".join(scene_sources(scene)),
             video_provider=video_provider if animated else None,
             animate_prompt=animate_prompt if animated else None,
-            image_provider=image_provider if generated_background else None,
-            background_mode=background_mode.value if generated_background else None,
-            background_prompt=background_prompt if generated_background else None,
+            image_provider=image_provider if background else None,
+            background_mode=background.mode.value if background else None,
+            background_prompt=background.prompt if background else None,
         )
         clip_path = work_dir / f"scene_{scene_id}.mp4"
         try:
@@ -261,7 +280,7 @@ def render_script(
                 )
             else:
                 visual_path = visual_paths[0]
-                if generated_background:
+                if background is not None:
                     # Cached under work_dir rather than regenerated: a resumed
                     # run that died during this scene's animation should not
                     # pay for the background a second time, and reusing the
@@ -275,9 +294,9 @@ def render_script(
                             apply_background(
                                 str(visual_path),
                                 load_background_provider(),
-                                mode=background_mode,
+                                mode=background.mode,
                                 output_path=str(bg_path),
-                                prompt=background_prompt,
+                                prompt=background.prompt,
                                 # The profile knows what animal this is and
                                 # the provider does not; REPLACE has to be
                                 # told what to keep in the frame.
@@ -309,7 +328,7 @@ def render_script(
                     duration=duration,
                     subtitle_text=scene["subtitle"],
                     output_path=str(clip_path),
-                    disclosure_text=disclosure_for(generated_background),
+                    disclosure_text=disclosure_for(background),
                 )
         except Exception as e:
             # Boundary: FFmpeg and the I2V providers are external. Record

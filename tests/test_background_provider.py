@@ -289,8 +289,8 @@ def test_the_birefnet_backend_still_produces_a_usable_graph(monkeypatch):
 
     assert not any(v["class_type"] == "SAM3_Detect" for v in graph.values())
     matte = next(v for v in graph.values() if v["class_type"] == "RemoveBackground")
-    scale_node = next(k for k, v in graph.items() if v["class_type"] == "ImageScale")
-    assert matte["inputs"]["image"] == [scale_node, 0]
+    load_node = next(k for k, v in graph.items() if v["class_type"] == "LoadImage")
+    assert matte["inputs"]["image"] == [load_node, 0]
 
 
 def test_replace_keeps_the_subject_mask_from_swallowing_its_surroundings():
@@ -410,11 +410,15 @@ def test_replace_saves_the_subject_mask_it_used():
     graph = provider._replace_graph("photo.jpg", margins, "an empty park", "scene_1_bg", "cat")
 
     subject_node = next(k for k, v in graph.items() if v["class_type"] == "GrowMaskWithBlur")
-    to_image = next(v for v in graph.values() if v["class_type"] == "MaskToImage")
-    assert to_image["inputs"]["mask"] == [subject_node, 0]
-
     saves = [v for v in graph.values() if v["class_type"] == "SaveImage"]
     assert len(saves) == 2, "the picture and the mask it was made with"
+
+    mask_save = next(v for v in saves if v["inputs"]["filename_prefix"].endswith("_mask"))
+    to_image = graph[mask_save["inputs"]["images"][0]]
+    assert to_image["class_type"] == "MaskToImage"
+    assert to_image["inputs"]["mask"] == [subject_node, 0], (
+        "the mask that was actually composited, not an intermediate one"
+    )
 
 
 def test_replace_refuses_a_photo_the_subject_is_not_in(monkeypatch, tmp_path):
@@ -446,20 +450,20 @@ def test_replace_accepts_a_photo_the_subject_fills(monkeypatch, tmp_path):
     provider._require_subject_was_found(entry, "photo.jpg", str(tmp_path / "out.png"), "cat")
 
 
-def test_the_subject_is_segmented_before_the_frame_padding_is_added():
-    """Measured: a clearly visible cat came back as 2.4% of the frame from
-    the scaled photo and 0.0% once the grey padding bars were around it. A
-    photo never has those bars, so the detector was being shown something
-    unlike anything it was trained on. The mask is placed onto the full
-    canvas afterwards instead."""
+def test_the_subject_is_segmented_from_the_photograph_as_uploaded():
+    """Measured on one asset: the same cat came back as 0.0% of the frame
+    once the grey padding bars were around it (a photo never has those), and
+    0.0% again when the photo was merely downscaled first (the animal was
+    small in a cluttered room). So the matte is taken from the original and
+    scaled onto the canvas afterwards."""
     provider = ComfyBackgroundProvider()
     margins = plan_margins(4000, 3000, *FRAME)
 
     graph = provider._replace_graph("photo.jpg", margins, "an empty park", "scene_1_bg", "cat")
 
-    scale_node = next(k for k, v in graph.items() if v["class_type"] == "ImageScale")
+    load_node = next(k for k, v in graph.items() if v["class_type"] == "LoadImage")
     detect = next(v for v in graph.values() if v["class_type"] == "SAM3_Detect")
-    assert detect["inputs"]["image"] == [scale_node, 0]
+    assert detect["inputs"]["image"] == [load_node, 0]
 
     place = next(v for v in graph.values() if v["class_type"] == "MaskComposite")
     canvas = graph[place["inputs"]["destination"][0]]

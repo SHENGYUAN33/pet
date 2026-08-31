@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import enum
 
+from pydantic import BaseModel
+
 from pipeline import config
 from providers.base import ImageEditingProvider
 from providers.image.comfy_background_provider import ComfyBackgroundProvider
@@ -33,10 +35,82 @@ class BackgroundMode(str, enum.Enum):
     response without conversion, the same way JobStatus does.
     """
 
+    #: Show the photograph as it is; the empty frame margin is filled by
+    #: pipeline/editing.py's SCENE_FIT_MODE (blurred copy, black, or crop).
+    #: Only a script can ask for this — it is what "this shot needs no
+    #: generated background" looks like in the timeline.
+    KEEP = "keep"
     #: Keep the real background, generate only the empty margin.
     EXTEND = "extend"
     #: Cut the pet out and generate an entirely new setting.
     REPLACE = "replace"
+
+
+class SceneBackground(BaseModel):
+    """The background treatment one shot is getting, and what to generate.
+
+    Produced by resolve_scene_background below rather than read straight off
+    the script, because two sources can decide it and they have to be
+    reconciled in one place.
+    """
+
+    mode: BackgroundMode
+    #: None means "the provider's default wording" — a caller who asked for a
+    #: treatment without describing it still gets one.
+    prompt: str | None = None
+
+
+def _combine(prompt: str | None, art_direction: str | None) -> str | None:
+    """Put the shot's own description and the film's look into one prompt.
+
+    art_direction is what keeps six shots looking like one video instead of
+    six: it names the light, the palette, the depth of field, and it has to
+    reach every generated frame. Appended rather than prepended so the shot's
+    own subject leads — same reasoning as the Wan provider's camera
+    constraint.
+    """
+    parts = [part.strip() for part in (prompt, art_direction) if part and part.strip()]
+    return ", ".join(parts) or None
+
+
+def resolve_scene_background(
+    scene: dict,
+    *,
+    art_direction: str | None = None,
+    override_scenes: set[int] | None = None,
+    override_mode: BackgroundMode = BackgroundMode.EXTEND,
+    override_prompt: str | None = None,
+) -> SceneBackground | None:
+    """What background treatment this shot gets, or None for none at all.
+
+    Two sources, and the order between them is the point. A reviewer who
+    names scenes on the command line is correcting a specific shot, so that
+    wins. Otherwise the script's own `background` block decides — which is
+    how a video gets a setting that *changes* across the shots (a cage, then
+    a street, then a home) instead of the same prompt six times.
+
+    A script that carries no background block at all, or one asking for
+    KEEP, means the photograph is shown as photographed.
+    """
+    scene_id = scene.get("scene_id")
+    if override_scenes and scene_id in override_scenes:
+        return SceneBackground(mode=override_mode, prompt=override_prompt)
+
+    block = scene.get("background")
+    if not isinstance(block, dict):
+        return None
+
+    try:
+        mode = BackgroundMode(block.get("mode"))
+    except ValueError:
+        # An unusable mode is not worth failing a render over: the shot is
+        # simply shown as photographed, and pipeline/qa.py reports it so a
+        # reviewer sees the script asked for something that doesn't exist.
+        return None
+
+    if mode is BackgroundMode.KEEP:
+        return None
+    return SceneBackground(mode=mode, prompt=_combine(block.get("prompt"), art_direction))
 
 
 _PROVIDERS = {
