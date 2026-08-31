@@ -7,7 +7,11 @@ from pathlib import Path
 
 from pipeline import config
 from pipeline.background import BackgroundMode
-from pipeline.fact_check import find_background_risks, find_missing_disclosures
+from pipeline.fact_check import (
+    find_background_risks,
+    find_missing_disclosures,
+    find_unsupported_claims,
+)
 from pipeline.models import JobStatus
 from pipeline.montage import append_recap_scene
 from pipeline.pet_repo import (
@@ -150,13 +154,20 @@ def _run_generation(
 
     selected_missing: list[str] = []
     selected_background_risks: list[str] = []
+    selected_unsupported: list[str] = []
     selected_structure_issues: list[str] = []
     for name, s in scripts.items():
-        missing = find_missing_disclosures(s, profile)
+        # The same model that wrote the script is asked to check it, which is
+        # weaker than an independent reviewer and is why all of this reports
+        # rather than blocks. It still catches the case that matters most:
+        # something said about this pet that its Profile never said.
+        missing = find_missing_disclosures(s, profile, llm)
         background_risks = find_background_risks(s)
+        unsupported = find_unsupported_claims(s, profile, llm)
         s["_disclosure_check"] = {
             "missing_restrictions": missing,
             "background_risks": background_risks,
+            "unsupported_claims": unsupported,
         }
         if missing:
             print(
@@ -165,6 +176,8 @@ def _run_generation(
             )
         for risk in background_risks:
             print(f"[WARNING] style={name!r} {risk}")
+        for claim in unsupported:
+            print(f"[WARNING] style={name!r} 影片說了資料裡沒有的事：{claim}")
 
         structure_issues = validate_script_structure(s)
         s["_structure_check"] = {"issues": structure_issues}
@@ -174,6 +187,7 @@ def _run_generation(
         if name == style:
             selected_missing = missing
             selected_background_risks = background_risks
+            selected_unsupported = unsupported
             selected_structure_issues = structure_issues
 
         (scripts_dir / f"{name}.json").write_text(
@@ -199,6 +213,7 @@ def _run_generation(
         work_dir=str(work_dir),
         disclosure_missing=selected_missing,
         background_risks=selected_background_risks,
+        unsupported_claims=selected_unsupported,
         structure_issues=selected_structure_issues,
     )
 

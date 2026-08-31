@@ -175,8 +175,9 @@ def test_forbidden_terms_match_whole_words_only():
 
 def test_a_background_risk_is_recorded_apart_from_a_missing_disclosure(tmp_path, monkeypatch):
     """They reach the reviewer as different warnings because the fix is
-    different: one is reworded in the narration, the other in the background
-    description. Merging them would tell someone to edit the wrong thing."""
+    different: a missing disclosure is reworded in the narration, an invented
+    claim is removed from it, and a risky setting is reworded in the
+    background. Merging them would tell someone to edit the wrong thing."""
     from pipeline import pet_repo
 
     written = {}
@@ -206,6 +207,7 @@ def test_a_background_risk_is_recorded_apart_from_a_missing_disclosure(tmp_path,
     assert job.disclosure_missing == {
         "missing_restrictions": ["不與其他貓咪同住"],
         "background_risks": ["scene 2: generated background mentions child"],
+        "unsupported_claims": [],
     }
 
 

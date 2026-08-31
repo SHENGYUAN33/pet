@@ -5,7 +5,11 @@ import uuid
 
 from pipeline import config
 from pipeline.background import BackgroundMode
-from pipeline.fact_check import find_background_risks, find_missing_disclosures
+from pipeline.fact_check import (
+    find_background_risks,
+    find_missing_disclosures,
+    find_unsupported_claims,
+)
 from pipeline.pet_repo import (
     fail_generation_job,
     finish_generation_job,
@@ -19,6 +23,7 @@ from pipeline.progress import ProgressCallback, noop, scaled
 from pipeline.qa import validate_script_structure
 from pipeline.rendering import render_script
 from pipeline.scene_tracking import DatabaseSceneTracker
+from providers.llm.ollama_provider import OllamaLLMProvider
 
 
 def apply_scene_overrides(
@@ -155,18 +160,26 @@ def _render_revision(
 ) -> str:
     """The body of regenerate_scene() — split out so the job row is closed as
     FAILED by exactly one except clause."""
-    missing = find_missing_disclosures(script, profile)
+    # A revision is exactly where a reviewer's own wording enters the video,
+    # so it is checked like any other script. This is one small call, not the
+    # script generation that regeneration exists to avoid re-running.
+    llm = OllamaLLMProvider()
+    missing = find_missing_disclosures(script, profile, llm)
     background_risks = find_background_risks(script)
+    unsupported = find_unsupported_claims(script, profile, llm)
     structure_issues = validate_script_structure(script)
     script["_disclosure_check"] = {
         "missing_restrictions": missing,
         "background_risks": background_risks,
+        "unsupported_claims": unsupported,
     }
     script["_structure_check"] = {"issues": structure_issues}
     if missing:
         print(f"[WARNING] may be missing required disclosure(s): {missing}")
     for risk in background_risks:
         print(f"[WARNING] {risk}")
+    for claim in unsupported:
+        print(f"[WARNING] 影片說了資料裡沒有的事：{claim}")
     if structure_issues:
         print(f"[WARNING] structural issues: {structure_issues}")
 
@@ -177,6 +190,7 @@ def _render_revision(
         work_dir=str(work_dir),
         disclosure_missing=missing,
         background_risks=background_risks,
+        unsupported_claims=unsupported,
         structure_issues=structure_issues,
     )
 

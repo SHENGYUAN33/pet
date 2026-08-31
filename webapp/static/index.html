@@ -1288,6 +1288,10 @@ function renderJobs() {
     // disclosure because the fix is different: reword the background, not
     // the narration.
     const bgRisks = ((job.disclosure_missing || {}).background_risks) || [];
+    // Things the script says about this pet that its Profile does not
+    // support. Separate again, because the fix is to delete the sentence
+    // rather than to add one (pipeline/fact_check.py).
+    const invented = ((job.disclosure_missing || {}).unsupported_claims) || [];
     const issues = ((job.structure_issues || {}).issues) || [];
     // Jobs are recorded from the moment a run starts, so a card can describe
     // a run that is still going or that died — only a finished one has a
@@ -1310,7 +1314,7 @@ function renderJobs() {
       done ? '<span class="badge">' + job.duration + "s · " + job.scene_count + " 鏡頭</span>" : "",
       cleaned ? '<span class="badge">🗑 已清理檔案</span>' : "",
       job.parent_job_id ? '<span class="badge">↺ 重生自 ' + job.parent_job_id + "</span>" : "",
-      done && !missing.length && !bgRisks.length && !issues.length ? '<span class="badge ok">✓ 檢查通過</span>' : "",
+      done && !missing.length && !bgRisks.length && !invented.length && !issues.length ? '<span class="badge ok">✓ 檢查通過</span>' : "",
       '<span class="job-time">' + new Date(job.created_at).toLocaleString("zh-TW") + "</span>",
     ].join("");
     div.appendChild(top);
@@ -1325,6 +1329,12 @@ function renderJobs() {
       const d = document.createElement("div");
       d.className = "issue bad";
       d.textContent = "缺少揭露：" + missing.join("、");
+      div.appendChild(d);
+    }
+    if (invented.length) {
+      const d = document.createElement("div");
+      d.className = "issue bad";
+      d.textContent = "影片說了資料裡沒有的事：" + invented.join("；");
       div.appendChild(d);
     }
     if (bgRisks.length) {

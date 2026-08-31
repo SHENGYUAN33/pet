@@ -342,3 +342,13 @@ IDENTITY_CHECK_ENABLED = os.getenv("IDENTITY_CHECK_ENABLED", "1").lower() not in
     "no",
 }
 VLM_PROVIDER = os.getenv("VLM_PROVIDER", "ollama")
+# Whether fact-checking may ask the script LLM about wording it cannot match
+# by substring. Off falls back to exact matching, which has one failure mode
+# — calling a paraphrased disclosure missing — and loses the check for
+# invented claims entirely, since no amount of string matching can tell a
+# fabricated sentence from a true one.
+FACT_CHECK_SEMANTIC_ENABLED = os.getenv("FACT_CHECK_SEMANTIC_ENABLED", "1").lower() not in {
+    "0",
+    "false",
+    "no",
+}
