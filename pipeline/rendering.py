@@ -252,7 +252,7 @@ def render_script(
         # spends its opening minutes on the background; the animation step
         # re-reports itself when it takes over.
         if background is not None:
-            step = f"：{image_provider} 生成{background.mode.value}背景中"
+            step = f"：{image_provider} {background.mode.label}背景生成中"
         elif animated:
             step = f"：{video_provider} 動態化中（比較久）"
         else:

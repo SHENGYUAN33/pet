@@ -515,3 +515,91 @@ def test_cleaned_version_reports_deleted_rather_than_missing(client):
     job = client.get(f"/api/jobs/{job_id}").json()
     assert job["cleaned_at"] is not None
     assert job["script_json"] is not None
+
+
+def test_regenerate_rejects_a_background_description_with_no_treatment(client):
+    """Same class of contradiction as the motion-guidance guard above: a
+    described setting that never gets generated reads afterwards as "the
+    background did nothing"."""
+    from tests.conftest import completed_job
+
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+    job_id = completed_job(TEST_PET_ID, script_json={"scenes": [{"scene_id": 1}]})
+
+    response = client.post(
+        f"/api/jobs/{job_id}/regenerate-scene",
+        json={
+            "scene_id": 1,
+            "generate_background": False,
+            "background_prompt": "green grass in a sunny park",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "背景" in response.json()["detail"]
+
+
+def test_generate_passes_the_background_override_through(client, monkeypatch):
+    """The web form has to be able to overrule the script for a named shot,
+    the same way the CLI can — otherwise a reviewer can only fix a bad
+    background by editing the script by hand."""
+    from webapp import main
+
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+    captured = {}
+
+    def fake_generate_video(**kwargs):
+        captured.update(kwargs)
+        return "out.mp4", 1
+
+    monkeypatch.setattr(main, "generate_video", fake_generate_video)
+
+    response = client.post(
+        f"/api/pets/{TEST_PET_ID}/generate",
+        json={
+            "background_scenes": [1, 3],
+            "background_mode": "replace",
+            "background_prompt": "green grass in a sunny park",
+        },
+    )
+    assert response.status_code == 202
+
+    _drain_tasks()
+
+    assert captured["background_scenes"] == {1, 3}
+    assert captured["background_mode"].value == "replace"
+    assert captured["background_prompt"] == "green grass in a sunny park"
+
+
+def test_generate_without_an_override_leaves_the_script_in_charge(client, monkeypatch):
+    """Nothing named means every shot keeps whatever background its own
+    script asked for — which is where the story's sequence of places lives."""
+    from webapp import main
+
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+    captured = {}
+
+    def fake_generate_video(**kwargs):
+        captured.update(kwargs)
+        return "out.mp4", 1
+
+    monkeypatch.setattr(main, "generate_video", fake_generate_video)
+
+    assert client.post(f"/api/pets/{TEST_PET_ID}/generate", json={}).status_code == 202
+
+    _drain_tasks()
+
+    assert captured["background_scenes"] is None
+
+
+def _drain_tasks() -> None:
+    """Wait for the background worker thread to finish the task just started."""
+    import time
+
+    from webapp import tasks
+
+    for _ in range(200):
+        if not any(t["status"] == "running" for t in tasks.list_tasks()):
+            return
+        time.sleep(0.02)
+    raise AssertionError("background task did not finish")

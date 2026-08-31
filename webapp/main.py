@@ -32,6 +32,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
 from pipeline import config
+from pipeline.background import BackgroundMode
 from pipeline.pet_repo import (
     cleanup_generation_job,
     cleanup_old_generation_jobs,
@@ -231,6 +232,13 @@ class GenerateRequest(BaseModel):
     animate_scenes: list[int] | None = None
     video_provider: str = "svd"
     animate_prompt: str | None = None
+    #: Scenes to overrule the script on. Left empty — the normal case — every
+    #: shot gets whatever background its script asked for, which is where the
+    #: story's own sequence of places lives (pipeline/background.py).
+    background_scenes: list[int] | None = None
+    background_mode: BackgroundMode = BackgroundMode.EXTEND
+    background_prompt: str | None = None
+    image_provider: str = "comfy"
     recap_unused_assets: bool = False
 
 
@@ -244,6 +252,10 @@ class RegenerateSceneRequest(BaseModel):
     animate: bool = False
     video_provider: str = "svd"
     animate_prompt: str | None = None
+    generate_background: bool = False
+    background_mode: BackgroundMode = BackgroundMode.EXTEND
+    background_prompt: str | None = None
+    image_provider: str = "comfy"
 
 
 @app.get("/api/pets/{pet_id}/scene-plan")
@@ -316,6 +328,10 @@ def api_generate(pet_id: str, req: GenerateRequest):
             animate_scenes=set(req.animate_scenes) if req.animate_scenes else None,
             video_provider=req.video_provider,
             animate_prompt=req.animate_prompt,
+            background_scenes=set(req.background_scenes) if req.background_scenes else None,
+            background_mode=req.background_mode,
+            background_prompt=req.background_prompt,
+            image_provider=req.image_provider,
             recap_unused_assets=req.recap_unused_assets,
             on_progress=on_progress,
         )
@@ -361,6 +377,13 @@ def api_regenerate_scene(job_id: int, req: RegenerateSceneRequest):
             status_code=400,
             detail="填了動作描述，但沒有啟用動態化 — 請選一個影片生成模型，否則這顆鏡頭只會做照片運鏡",
         )
+    # Same class of contradiction: a described setting that never gets
+    # generated reads afterwards as "the background did nothing".
+    if req.background_prompt and not req.generate_background:
+        raise HTTPException(
+            status_code=400,
+            detail="填了背景描述，但沒有啟用背景生成 — 勾選「重新生成背景」，否則這顆鏡頭會照原本的畫面渲染",
+        )
 
     def work(on_progress: ProgressCallback) -> dict:
         output_path, new_job_id = regenerate_scene(
@@ -374,6 +397,10 @@ def api_regenerate_scene(job_id: int, req: RegenerateSceneRequest):
             animate=req.animate,
             video_provider=req.video_provider,
             animate_prompt=req.animate_prompt,
+            generate_background=req.generate_background,
+            background_mode=req.background_mode,
+            background_prompt=req.background_prompt,
+            image_provider=req.image_provider,
             on_progress=on_progress,
         )
         return {"output_path": output_path, "job_id": new_job_id}

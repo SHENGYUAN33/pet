@@ -751,6 +751,28 @@ textarea.auto { min-height: 76px; resize: vertical; font-family: inherit; }
             </div>
           </details>
 
+          <details class="adv">
+            <summary>AI 背景（選填，覆寫腳本的決定）</summary>
+            <div class="adv-body">
+              <p class="hint" style="margin-top:0">腳本本來就會幫每個鏡頭決定背景怎麼處理（照故事線推進），這裡只有在你要<strong>推翻腳本的決定</strong>時才需要填——填了鏡頭編號，那幾顆就一律照下面的設定做。需要先開著 ComfyUI。</p>
+              <label class="field">
+                <span class="lbl">要覆寫的鏡頭<span class="sub">逗號分隔 scene id，例如 1,3；留白＝完全照腳本</span></span>
+                <input type="text" name="background_scenes" placeholder="1,3" />
+              </label>
+              <label class="field">
+                <span class="lbl">處理方式</span>
+                <select name="background_mode">
+                  <option value="extend">延伸背景（保留照片真實背景，只補直式畫面的空白邊）</option>
+                  <option value="replace">置換背景（把寵物去背，整個場景重新生成）</option>
+                </select>
+              </label>
+              <label class="field">
+                <span class="lbl">背景描述 prompt<span class="sub"><strong>必須是英文</strong>。延伸＝描述整張畫面（含寵物）；置換＝只描述場景，<strong>不要提到任何動物</strong>（會多生一隻），建議選散景/淺景深</span></span>
+                <input type="text" name="background_prompt" placeholder="green grass in a sunny park, blurred trees behind, realistic photograph" />
+              </label>
+            </div>
+          </details>
+
           <button type="submit" class="primary">產生影片</button>
           <p class="hint" style="margin-top:8px">在背景執行，畫面會顯示進度；一般 10–60 秒，開了 AI 動態化會久很多（每個鏡頭數分鐘）。可以關掉進度視窗繼續看別的，跑完會通知。</p>
         </form>
@@ -818,6 +840,24 @@ textarea.auto { min-height: 76px; resize: vertical; font-family: inherit; }
               </div>
             </details>
 
+            <details class="adv">
+              <summary>AI 背景（選填）</summary>
+              <div class="adv-body">
+                <label class="field">
+                  <span class="lbl">重新生成這顆鏡頭的背景<span class="sub">選了處理方式就會啟用；只對照片鏡頭有效，需要先開著 ComfyUI</span></span>
+                  <select name="background_mode">
+                    <option value="">不處理背景（照原本的畫面渲染）</option>
+                    <option value="extend">延伸背景（保留真實背景，補空白邊）</option>
+                    <option value="replace">置換背景（去背後整個場景重生）</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span class="lbl">背景描述 prompt<span class="sub"><strong>必須是英文</strong>。延伸＝描述整張畫面（含寵物）；置換＝只描述場景，<strong>不要提到任何動物</strong></span></span>
+                  <input type="text" name="background_prompt" placeholder="green grass in a sunny park, blurred trees behind, realistic photograph" />
+                </label>
+              </div>
+            </details>
+
             <button type="submit" class="primary">重新生成這個鏡頭</button>
             <p class="hint" style="margin-top:8px">不會重跑 LLM，只 patch 這個鏡頭後重新渲染，並存成新的一筆版本（舊版保留）。</p>
           </div>
@@ -840,6 +880,10 @@ textarea.auto { min-height: 76px; resize: vertical; font-family: inherit; }
 <script>
 const SPECIES_EMOJI = { cat: "🐱", dog: "🐶" };
 const STYLE_LABEL = { cute: "萌系", warm_story: "溫暖故事", contrast_humor: "反差幽默" };
+// How a shot's background was made. "keep" is the ordinary case and says
+// nothing, so it stays unlabelled — a badge on every row would drown the
+// two that matter.
+const BACKGROUND_LABEL = { extend: "🖼 延伸背景", replace: "🎨 置換背景（AI）" };
 
 let allPets = [];
 let currentPetId = null;
@@ -1470,6 +1514,10 @@ async function loadScenes(jobId) {
     div.querySelector(".sub-line").textContent = scene.subtitle || scene.narration || "(無字幕)";
     const meta = [scene.purpose, scene.visual_source];
     if (scene.start != null && scene.end != null) meta.push(scene.start + "–" + scene.end + "s");
+    // How this shot's background was made, so someone choosing a shot to
+    // redo can see which ones carry generated content — a replaced setting
+    // is the one the video has to disclose.
+    meta.push(BACKGROUND_LABEL[(scene.background || {}).mode] || null);
     div.querySelector(".m").textContent = meta.filter(Boolean).join(" · ");
     div.onclick = () => selectScene(scene, div);
     host.appendChild(div);
@@ -1519,6 +1567,16 @@ document.querySelectorAll(".tab").forEach((t) => {
 });
 
 /* ---------- generate ---------- */
+// "2,4" -> [2, 4]; anything that isn't a number is dropped rather than sent
+// as NaN. Empty means null, which every caller reads as "not specified".
+function parseSceneIds(raw) {
+  const ids = (raw || "")
+    .split(",")
+    .map((part) => parseInt(part.trim(), 10))
+    .filter((n) => !isNaN(n));
+  return ids.length ? ids : null;
+}
+
 $("generate-form").elements.duration.addEventListener("input", scheduleScenePlan);
 $("generate-form").elements.recap_unused_assets.addEventListener("change", refreshScenePlan);
 
@@ -1532,11 +1590,14 @@ $("generate-form").addEventListener("submit", async (e) => {
     duration: parseInt(form.get("duration"), 10),
     voice_sample: form.get("voice_sample") || null,
     music_track: form.get("music_track") || null,
-    animate_scenes: animateScenesRaw
-      ? animateScenesRaw.split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n))
-      : null,
+    animate_scenes: parseSceneIds(animateScenesRaw),
     video_provider: form.get("video_provider"),
     animate_prompt: form.get("animate_prompt") || null,
+    // Empty is the normal case: every shot then gets whatever background its
+    // script asked for, which is where the story's sequence of places lives.
+    background_scenes: parseSceneIds(form.get("background_scenes")),
+    background_mode: form.get("background_mode") || "extend",
+    background_prompt: form.get("background_prompt") || null,
     recap_unused_assets: form.get("recap_unused_assets") === "on",
   };
   // Both halves are needed, and getting one without the other used to mean
@@ -1552,6 +1613,13 @@ $("generate-form").addEventListener("submit", async (e) => {
   if (!body.video_provider) {
     body.animate_scenes = null;
     body.video_provider = "svd";
+  }
+  // A description with nothing to apply it to would be dropped in silence,
+  // and the reviewer would be left thinking the background setting did
+  // nothing rather than that it was never used.
+  if (body.background_prompt && !body.background_scenes) {
+    toast("填了背景描述，但沒填要覆寫哪些鏡頭 — 留白的話每顆鏡頭會照腳本自己的背景做", "err");
+    return;
   }
   try {
     const task = await api("/api/pets/" + encodeURIComponent(currentPetId) + "/generate", {
@@ -1594,6 +1662,11 @@ $("regenerate-form").addEventListener("submit", async (e) => {
     animate: Boolean(form.get("video_provider")),
     video_provider: form.get("video_provider") || "svd",
     animate_prompt: form.get("animate_prompt") || null,
+    // Same one-control rule as animation above: choosing a treatment is what
+    // turns background generation on.
+    generate_background: Boolean(form.get("background_mode")),
+    background_mode: form.get("background_mode") || "extend",
+    background_prompt: form.get("background_prompt") || null,
   };
   try {
     const task = await api("/api/jobs/" + jobId + "/regenerate-scene", {

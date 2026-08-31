@@ -221,3 +221,11 @@ class _NullSession:
 
     def __exit__(self, *exc):
         return False
+
+
+def test_every_treatment_has_a_label_for_the_progress_line():
+    """The enum values are wire format; a progress line reading "generating
+    replace background" mid-sentence in Chinese is not something a reviewer
+    should have to parse."""
+    for mode in BackgroundMode:
+        assert mode.label and mode.label != mode.value

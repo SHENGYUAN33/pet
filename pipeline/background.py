@@ -45,6 +45,18 @@ class BackgroundMode(str, enum.Enum):
     #: Cut the pet out and generate an entirely new setting.
     REPLACE = "replace"
 
+    @property
+    def label(self) -> str:
+        """What to call this treatment in progress messages the reviewer
+        reads. The enum values are wire format; a progress line saying
+        "generating replace background" in the middle of Chinese text is
+        not something anyone should have to parse."""
+        return {
+            BackgroundMode.KEEP: "原始",
+            BackgroundMode.EXTEND: "延伸",
+            BackgroundMode.REPLACE: "置換",
+        }[self]
+
 
 class SceneBackground(BaseModel):
     """The background treatment one shot is getting, and what to generate.
