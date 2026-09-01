@@ -603,3 +603,83 @@ def _drain_tasks() -> None:
             return
         time.sleep(0.02)
     raise AssertionError("background task did not finish")
+
+
+def test_approving_a_version_with_a_fabricated_claim_is_refused(client):
+    """The refusal lives on the server, not in the browser: hiding the button
+    would be a courtesy, and this is a rule (CLAUDE.md 事實正確性…不可發布)."""
+    from tests.conftest import completed_job
+
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+    job_id = completed_job(TEST_PET_ID, script_json={"scenes": [{"scene_id": 1}]})
+    from pipeline import pet_repo
+
+    pet_repo.record_job_script(
+        job_id,
+        script_json={"scenes": [{"scene_id": 1}]},
+        work_dir="storage/output/does-not-need-to-exist",
+        disclosure_missing=[],
+        unsupported_claims=["「我最愛跟小孩玩」— 資料裡查不到根據"],
+        structure_issues=[],
+    )
+
+    blockers = client.get(f"/api/jobs/{job_id}/blockers").json()["blockers"]
+    assert len(blockers) == 1
+
+    response = client.post(f"/api/jobs/{job_id}/approve", json={})
+    assert response.status_code == 400
+    assert "小孩" in response.json()["detail"]
+
+    assert client.get(f"/api/jobs/{job_id}").json()["review_state"] == "pending"
+
+
+def test_a_clean_version_can_be_approved(client):
+    from tests.conftest import completed_job
+
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+    job_id = completed_job(TEST_PET_ID, script_json={"scenes": [{"scene_id": 1}]})
+
+    assert client.get(f"/api/jobs/{job_id}/blockers").json()["blockers"] == []
+    assert client.post(f"/api/jobs/{job_id}/approve", json={}).status_code == 200
+
+    job = client.get(f"/api/jobs/{job_id}").json()
+    assert job["review_state"] == "approved"
+    assert job["reviewed_at"] is not None
+
+
+def test_rejecting_without_a_reason_is_refused(client):
+    """A rejection with no reason tells the next attempt nothing, so the next
+    run would be a guess."""
+    from tests.conftest import completed_job
+
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+    job_id = completed_job(TEST_PET_ID, script_json={"scenes": [{"scene_id": 1}]})
+
+    assert client.post(f"/api/jobs/{job_id}/reject", json={"note": "   "}).status_code == 400
+    assert client.get(f"/api/jobs/{job_id}").json()["review_state"] == "pending"
+
+
+def test_a_rejection_keeps_the_reason(client):
+    from tests.conftest import completed_job
+
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+    job_id = completed_job(TEST_PET_ID, script_json={"scenes": [{"scene_id": 1}]})
+
+    response = client.post(
+        f"/api/jobs/{job_id}/reject", json={"note": "第三個鏡頭的貓看起來變形了"}
+    )
+    assert response.status_code == 200
+
+    job = client.get(f"/api/jobs/{job_id}").json()
+    assert job["review_state"] == "rejected"
+    assert job["review_note"] == "第三個鏡頭的貓看起來變形了"
+
+
+def test_a_new_version_starts_unreviewed(client):
+    """Review is a mandatory step, so nothing may arrive already approved."""
+    from tests.conftest import completed_job
+
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+    job_id = completed_job(TEST_PET_ID, script_json={"scenes": [{"scene_id": 1}]})
+
+    assert client.get(f"/api/jobs/{job_id}").json()["review_state"] == "pending"

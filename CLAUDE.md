@@ -114,6 +114,14 @@
     - 兩項都**只回報不擋下**，而且**由寫腳本的同一個模型來查自己寫的腳本**——這比獨立審查弱，也正是全部只回報不擋下的原因。
     - 存在 `disclosure_missing` 這個 JSONB 的第三個 key（`unsupported_claims`），**沒有 migration**。網頁版本卡片三種問題分開顯示，因為修法不同：漏了要**補進旁白**、捏造要**從旁白刪掉**、背景有問題要**改背景描述**。
     - 單鏡頭重生也會跑（`pipeline/regen.py`）：那正是審核者自己的文字進到影片裡的地方。這是一次小呼叫，不是重生刻意要避開的腳本生成。
+  - **人工審核關卡（第八個切片）**：前面每一項檢查都只印警告——一支有三句捏造內容的影片，跑完之後看起來跟乾淨的一模一樣，而且**沒有任何地方記錄有人看過**。這一片把檢查結果變成一道真的關卡。
+    - **審核狀態是自己的欄位，不是新的 `JobStatus` 值**（`pipeline/review.py` 的 `ReviewState`：`pending`／`approved`／`rejected`）。`JobStatus` 講的是「這次執行有沒有跑完」，一個 job 檔案一產生就是 `done`，但在有人看過之前一直是 `pending`——把兩者混在一起會讓 `done` 同時代表兩件事。
+    - **哪些發現會擋下核准**（`publication_blockers()`）：`missing_restrictions`／`unsupported_claims`／`background_risks`。這三種都是「對一隻真實動物說了資料不支持的話」，也就是 CLAUDE.md 裡「事實正確性或合規檢查任一項失敗，無論總分多少都不可發布」那條。**結構問題與一致性檢查的發現刻意不擋**——那些是品質判斷（VLM 覺得像貼上去的鏡頭可能完全可以接受），判斷權在看畫面的人手上。不能被放行的只有「說了不是真的的事」。
+    - **規則寫在 repository 層，不是瀏覽器**（`pet_repo.approve_generation_job()` 會拒絕）。只存在於 UI 的規則不是規則；前端另外先問 `GET /api/jobs/{id}/blockers` 只是為了讓人**看到原因**，而不是按下去才被拒絕。
+    - **退回一定要寫原因**（前後端都擋）。沒有原因的退回等於什麼都沒告訴下一次生成，下一輪就只能用猜的。
+    - 網頁版本卡片：`pending` 不標（那是常態），核准/退回才有徽章；退回的卡片會顯示原因；只有 `pending` 且已完成、未清理的版本才會出現「核准／退回」按鈕。
+    - 寫這一片時抓到一個真的 bug：`get_generation_job()` 當初就沒有回傳 `disclosure_missing`／`structure_issues`（清單有、單筆讀取沒有），所以關卡讀不到任何發現、什麼都擋不住。已補上。
+    - 這道關卡目前**還沒有下游**——發布功能還沒做。它現在的價值是：留下「有人看過並負責」的紀錄（規範要求的必經關卡），以及給審核者一份待審清單。等社群發布做出來時，它就是那個前置條件。
   - **給非工程使用者的表單化 UI**：Pet Profile 不再只有 JSON textarea——`webapp/static/index.html` 現在是中文欄位表單（基本資料／健康狀態勾選／個性標籤 chip 編輯器／故事與領養條件／照片影片清單含縮圖／外觀特徵摺疊區），JSON 直編退居「進階」摺疊區（可「套用到上方表單」，但仍要按表單的儲存鈕才寫入 DB）。表單會保留 schema 中沒有對應 widget 的欄位再合併回去，不會靜默丟資料。**檔案路徑欄位改成用選的**：瀏覽器拿不到本機檔案的真實路徑，所以「從電腦選擇」＝開 OS 檔案對話框→上傳到 `storage/assets/<pet_id>/`→用存下來那份的相對路徑；新增 `POST /api/pets/{pet_id}/assets`（副檔名 allowlist、檔名淨化、同名不覆蓋、pet_id 先做字元檢查＋ `storage/assets/` 包含性檢查再查 DB）、`GET /api/pets/{pet_id}/assets`（列出已上傳檔案給下拉選單）、`GET /api/profile-files`（匯入表單改成下拉選單），照片縮圖走唯讀的 `/media` static mount。單鏡頭重生的「換素材」也從手打 asset_id 改成從該寵物素材下拉選。上傳需要先有 pet_id（新寵物要先存檔才能傳照片）。
 
 `GenerationJob` 現在是**開跑就建檔**：`start_generation_job()` 在慢工作開始前先寫一筆 `status=running`，結束時 `finish_generation_job()`（`done`＋ output_path/script_json）或 `fail_generation_job()`（`failed`＋錯誤原因）收尾，所以跑到一半崩潰／重啟不再是「完全沒紀錄」。狀態值是 `pipeline/models.py` 的 `JobStatus`（`running`／`done`／`failed`）。
@@ -122,7 +130,7 @@
 
 `pipeline/rendering.py` 刻意**不 import 資料庫**：鏡頭狀態透過 `scene_tracker` 參數注入（`pipeline/scene_tracking.py` 的 `NoopSceneTracker`／`DatabaseSceneTracker`），跟 `on_progress` 同一個模式——CLI/測試用 no-op，pipeline 用 DB 版。I2V provider 改成**延遲載入**，續跑時若動態化鏡頭都已完成就完全不載模型。
 
-這仍**只是** docs/architecture.md §10 的一個子集：§10 還有 SCRIPT_APPROVED／PUBLISHED 等狀態，對應的功能（腳本核准流程、社群發布）都還沒做，刻意不先刻空狀態；`PENDING` 要等真的有佇列（目前 job 一建立就在跑）。開發時請先確認目前實際完成到哪個階段，不要假設後期功能已存在。
+這仍**只是** docs/architecture.md §10 的一個子集：§10 的 PUBLISHED 等狀態要等社群發布做出來才有意義，刻意不先刻空狀態；`PENDING` 要等真的有佇列（目前 job 一建立就在跑）。人工核准已經做了，但走的是另一個軸（`GenerationJob.review_state`，見下方「人工審核關卡」），不是 `JobStatus` 的新值。開發時請先確認目前實際完成到哪個階段，不要假設後期功能已存在。
 
 **Schema 演進走 Alembic**（`migrations/`）：改了 `pipeline/models.py` 的既有表結構就要跟著出一份 migration——
 ```bash

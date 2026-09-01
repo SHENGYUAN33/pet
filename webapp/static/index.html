@@ -884,6 +884,12 @@ const STYLE_LABEL = { cute: "萌系", warm_story: "溫暖故事", contrast_humor
 // nothing, so it stays unlabelled — a badge on every row would drown the
 // two that matter.
 const BACKGROUND_LABEL = { extend: "🖼 延伸背景", replace: "🎨 置換背景（AI）" };
+// Where a version stands with a human. Pending is the ordinary state and
+// says nothing, so only a decision gets a badge.
+const REVIEW_BADGE = {
+  approved: '<span class="badge ok">✅ 已核准發布</span>',
+  rejected: '<span class="badge danger">⛔ 已退回</span>',
+};
 
 let allPets = [];
 let currentPetId = null;
@@ -1314,6 +1320,7 @@ function renderJobs() {
       done ? '<span class="badge">' + job.duration + "s · " + job.scene_count + " 鏡頭</span>" : "",
       cleaned ? '<span class="badge">🗑 已清理檔案</span>' : "",
       job.parent_job_id ? '<span class="badge">↺ 重生自 ' + job.parent_job_id + "</span>" : "",
+      REVIEW_BADGE[job.review_state] || "",
       done && !missing.length && !bgRisks.length && !invented.length && !issues.length ? '<span class="badge ok">✓ 檢查通過</span>' : "",
       '<span class="job-time">' + new Date(job.created_at).toLocaleString("zh-TW") + "</span>",
     ].join("");
@@ -1329,6 +1336,12 @@ function renderJobs() {
       const d = document.createElement("div");
       d.className = "issue bad";
       d.textContent = "缺少揭露：" + missing.join("、");
+      div.appendChild(d);
+    }
+    if (job.review_state === "rejected" && job.review_note) {
+      const d = document.createElement("div");
+      d.className = "issue";
+      d.textContent = "退回原因：" + job.review_note;
       div.appendChild(d);
     }
     if (invented.length) {
@@ -1352,12 +1365,31 @@ function renderJobs() {
 
     const actions = document.createElement("div");
     actions.className = "job-actions";
+    const actionsExtra = [];
     const playBtn = document.createElement("button");
     playBtn.type = "button";
     playBtn.className = "tiny";
     playBtn.textContent = job.id === playingJobId ? "▶ 播放中" : "▶ 播放";
     playBtn.disabled = !done || cleaned;
     playBtn.onclick = (e) => { e.stopPropagation(); playJob(job.id, true); };
+    // A version nobody has ruled on yet is the only one worth asking about;
+    // an approved or rejected one already has its answer on the card.
+    if (done && !cleaned && job.review_state === "pending") {
+      const approveBtn = document.createElement("button");
+      approveBtn.type = "button";
+      approveBtn.className = "tiny";
+      approveBtn.textContent = "✅ 核准發布";
+      approveBtn.onclick = (e) => { e.stopPropagation(); approveJob(job.id); };
+      actionsExtra.push(approveBtn);
+
+      const rejectBtn = document.createElement("button");
+      rejectBtn.type = "button";
+      rejectBtn.className = "tiny";
+      rejectBtn.textContent = "⛔ 退回";
+      rejectBtn.onclick = (e) => { e.stopPropagation(); rejectJob(job.id); };
+      actionsExtra.push(rejectBtn);
+    }
+
     const regenBtn = document.createElement("button");
     regenBtn.type = "button";
     regenBtn.className = "tiny";
@@ -1365,7 +1397,7 @@ function renderJobs() {
     // Regeneration only needs the script, which the cleanup keeps.
     regenBtn.disabled = !done;
     regenBtn.onclick = (e) => { e.stopPropagation(); openRegenFor(job.id); };
-    actions.append(playBtn, regenBtn);
+    actions.append(playBtn, ...actionsExtra, regenBtn);
 
     // A failed run that got as far as recording its script can be continued:
     // the scenes it already rendered are reused instead of costing another
@@ -1659,6 +1691,60 @@ $("generate-form").addEventListener("submit", async (e) => {
     toast("無法開始生成：" + err.message, "err");
   }
 });
+
+async function approveJob(jobId) {
+  // Asked before the request so the reviewer reads the reason rather than
+  // meeting a button that refuses when pressed. The server refuses anyway —
+  // this is the courtesy, that is the rule (pipeline/review.py).
+  let blockers = [];
+  try {
+    blockers = (await api("/api/jobs/" + jobId + "/blockers")).blockers || [];
+  } catch (err) {
+    toast("無法確認核准條件：" + err.message, "err");
+    return;
+  }
+  if (blockers.length) {
+    toast("這個版本還不能核准：" + blockers.join("；"), "err");
+    return;
+  }
+  const ok = confirm(
+    "核准 Job " + jobId + " 可以發布？核准代表你已經看過影片內容，並確認它沒有說出資料以外的事。"
+  );
+  if (!ok) return;
+  try {
+    await api("/api/jobs/" + jobId + "/approve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ note: null }),
+    });
+    toast("已核准 Job " + jobId, "ok");
+    await selectPet(currentPetId, true);
+  } catch (err) {
+    toast("核准失敗：" + err.message, "err");
+  }
+}
+
+async function rejectJob(jobId) {
+  // The reason is the whole value of a rejection: without it the next run is
+  // a guess, so it is required here and required again on the server.
+  const note = prompt("退回 Job " + jobId + " — 請說明原因（下一次生成要改什麼？）");
+  if (note === null) return;
+  if (!note.trim()) {
+    toast("請說明退回原因", "err");
+    return;
+  }
+  try {
+    await api("/api/jobs/" + jobId + "/reject", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ note: note }),
+    });
+    toast("已退回 Job " + jobId, "ok");
+    await selectPet(currentPetId, true);
+  } catch (err) {
+    toast("退回失敗：" + err.message, "err");
+  }
+}
 
 async function resumeJob(jobId) {
   try {

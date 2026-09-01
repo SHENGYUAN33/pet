@@ -34,6 +34,7 @@ from pydantic import BaseModel, ValidationError
 from pipeline import config
 from pipeline.background import BackgroundMode
 from pipeline.pet_repo import (
+    approve_generation_job,
     cleanup_generation_job,
     cleanup_old_generation_jobs,
     get_generation_job,
@@ -42,12 +43,14 @@ from pipeline.pet_repo import (
     list_pets,
     list_scene_jobs,
     reap_interrupted_jobs,
+    reject_generation_job,
     save_pet,
 )
 from pipeline.planning import ScenePlan, plan_scenes
 from pipeline.profile import PetProfile
 from pipeline.progress import ProgressCallback
 from pipeline.regen import regenerate_scene
+from pipeline.review import publication_blockers
 from pipeline.run import generate_video, resume_generation_job
 from webapp import tasks
 
@@ -465,6 +468,43 @@ def api_get_task(task_id: str):
     if task is None:
         raise HTTPException(status_code=404, detail=f"No task found with id {task_id!r}")
     return task
+
+
+class ReviewRequest(BaseModel):
+    note: str | None = None
+
+
+@app.get("/api/jobs/{job_id}/blockers")
+def api_job_blockers(job_id: int):
+    """Why this version cannot be approved yet, or an empty list.
+
+    The review panel asks before offering the approve button, so a reviewer
+    sees the reason rather than a button that refuses when pressed."""
+    job = get_generation_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"No generation job found with id {job_id}")
+    return {"blockers": publication_blockers(job)}
+
+
+@app.post("/api/jobs/{job_id}/approve")
+def api_approve_job(job_id: int, req: ReviewRequest):
+    """Record that a person approved this version.
+
+    The refusal lives in pipeline/pet_repo.py, not here: hiding the button
+    would be a UI courtesy, and this is a rule."""
+    try:
+        return approve_generation_job(job_id, note=req.note)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.post("/api/jobs/{job_id}/reject")
+def api_reject_job(job_id: int, req: ReviewRequest):
+    """Record that a person turned this version down, with the reason."""
+    try:
+        return reject_generation_job(job_id, note=req.note or "")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @app.get("/api/jobs/{job_id}")

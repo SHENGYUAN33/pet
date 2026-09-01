@@ -7,6 +7,8 @@ from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint, 
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from pipeline.review import ReviewState
+
 
 class Base(DeclarativeBase):
     pass
@@ -117,6 +119,15 @@ class GenerationJob(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Where this version stands with a human (pipeline/review.py's
+    # ReviewState). Its own column rather than another JobStatus value,
+    # because status is about whether the *run* finished: a job is DONE the
+    # moment the file exists and stays unreviewed until somebody looks. The
+    # note carries the reviewer's reason, which is the whole value of a
+    # rejection — the next attempt has to know what was wrong.
+    review_state: Mapped[str] = mapped_column(String, default=ReviewState.PENDING.value)
+    review_note: Mapped[str | None] = mapped_column(String, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Set when this run's rendered files are deleted to reclaim space. The row
     # itself stays: the project requires every video to keep a record of which
     # provider, prompt and script produced it (CLAUDE.md 開發規範), so a

@@ -8,6 +8,7 @@ from pipeline import config
 from pipeline.db import get_session
 from pipeline.models import GenerationJob, JobStatus, Pet, SceneJob
 from pipeline.profile import PetProfile
+from pipeline.review import ReviewState, publication_blockers
 
 
 def save_pet(profile: PetProfile) -> None:
@@ -181,7 +182,16 @@ def get_generation_job(job_id: int) -> dict | None:
             "image_provider": row.image_provider,
             "background_prompt": row.background_prompt,
             "script_json": row.script_json,
+            # The check results, which pipeline/review.py needs to decide
+            # whether this version may be approved. They were missing here
+            # until the gate was written, so the gate saw nothing to block on
+            # — the listing had them and the single-job read did not.
+            "disclosure_missing": row.disclosure_missing,
+            "structure_issues": row.structure_issues,
             "parent_job_id": row.parent_job_id,
+            "review_state": row.review_state,
+            "review_note": row.review_note,
+            "reviewed_at": row.reviewed_at.isoformat() if row.reviewed_at else None,
             "cleaned_at": row.cleaned_at.isoformat() if row.cleaned_at else None,
         }
 
@@ -206,6 +216,9 @@ def list_generation_jobs(pet_id: str) -> list[dict]:
                 "structure_issues": row.structure_issues,
                 "scene_count": len(row.script_json.get("scenes", [])),
                 "parent_job_id": row.parent_job_id,
+                "review_state": row.review_state,
+                "review_note": row.review_note,
+                "reviewed_at": row.reviewed_at.isoformat() if row.reviewed_at else None,
                 "created_at": row.created_at.isoformat(),
                 "finished_at": row.finished_at.isoformat() if row.finished_at else None,
                 "cleaned_at": row.cleaned_at.isoformat() if row.cleaned_at else None,
@@ -346,6 +359,53 @@ def _require_scene_job(session, job_id: int, scene_id: int) -> SceneJob:
     if scene is None:
         raise ValueError(f"No scene job for job {job_id} scene {scene_id}")
     return scene
+
+
+def approve_generation_job(job_id: int, *, note: str | None = None) -> dict:
+    """Record that a person approved this version for publishing.
+
+    Refuses while anything in pipeline/review.py's blocking set stands. The
+    check is here rather than in the browser because a rule that only exists
+    in the UI is not a rule — and because these particular findings are the
+    ones CLAUDE.md says no score and no reviewer may override: a video that
+    says something untrue about a real animal.
+    """
+    job = get_generation_job(job_id)
+    if job is None:
+        raise ValueError(f"No generation job found with id {job_id}")
+
+    blockers = publication_blockers(job)
+    if blockers:
+        raise ValueError("這個版本還不能核准：" + "；".join(blockers))
+
+    with get_session() as session:
+        row = _require_job(session, job_id)
+        row.review_state = ReviewState.APPROVED.value
+        row.review_note = note
+        row.reviewed_at = datetime.now(UTC)
+
+    return {"job_id": job_id, "review_state": ReviewState.APPROVED.value}
+
+
+def reject_generation_job(job_id: int, *, note: str) -> dict:
+    """Record that a person turned this version down, and why.
+
+    The note is required. A rejection without a reason tells whoever picks
+    this up next nothing at all, and the next run would be a guess.
+
+    Unlike approval this has no preconditions: a version can be turned down
+    for any reason, including ones no check here knows about.
+    """
+    if not note.strip():
+        raise ValueError("退回時必須說明原因，否則下一次生成不知道要改什麼")
+
+    with get_session() as session:
+        row = _require_job(session, job_id)
+        row.review_state = ReviewState.REJECTED.value
+        row.review_note = note.strip()
+        row.reviewed_at = datetime.now(UTC)
+
+    return {"job_id": job_id, "review_state": ReviewState.REJECTED.value}
 
 
 def reap_interrupted_jobs(reason: str) -> list[int]:
