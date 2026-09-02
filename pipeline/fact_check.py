@@ -5,6 +5,7 @@ import re
 
 from pipeline import config
 from pipeline.background import BackgroundMode
+from pipeline.overlay_renderer import resolve_scene_overlay
 from pipeline.profile import PetProfile
 from providers.base import LLMProvider
 
@@ -26,10 +27,22 @@ _DISCLOSURE_PROMPT = """\
 
 
 def _script_text(script: dict) -> str:
-    return " ".join(
-        f"{scene.get('narration', '')} {scene.get('subtitle', '')}"
-        for scene in script.get("scenes", [])
-    ).strip()
+    """Everything this video says about the pet, spoken or printed.
+
+    The overlay panels count. "疫苗：已完成" on an information sidebar is a
+    claim about a real animal exactly as much as the same words in the
+    narration — and on a platform where most viewing is muted, the printed
+    version is the one that actually reaches the adopter. Leaving them out
+    would have made the panels the one place a fabrication could not be
+    caught.
+    """
+    parts = []
+    for scene in script.get("scenes", []):
+        parts.append(f"{scene.get('narration', '')} {scene.get('subtitle', '')}")
+        spec = resolve_scene_overlay(scene)
+        if spec is not None:
+            parts.append(spec.spoken_text())
+    return " ".join(parts).strip()
 
 
 def _extract_json(raw: str) -> dict:

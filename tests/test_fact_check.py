@@ -180,3 +180,46 @@ def test_the_semantic_checks_can_be_switched_off(monkeypatch):
     assert find_missing_disclosures(script, profile, llm) == profile.personality_tags.restrictions
     assert find_unsupported_claims(script, profile, llm) == []
     assert llm.prompts == []
+
+
+def test_a_restriction_disclosed_only_on_a_panel_counts_as_disclosed():
+    """A muted viewer reads the panel and never hears the narration, so a
+    restriction printed there has reached them — treating the panel as
+    invisible would report a disclosure that is plainly on screen."""
+    profile = PetProfile.load(EXAMPLE_PROFILE)
+    script = {
+        "scenes": [
+            {"narration": "我不親貓", "subtitle": "我不親貓"},
+            {
+                "narration": "來看看我",
+                "subtitle": "來看看我",
+                "overlay": {
+                    "template": "info_sidebar",
+                    "tags": ["不建議與小型動物共居"],
+                },
+            },
+        ]
+    }
+
+    assert find_missing_disclosures(script, profile) == []
+
+
+def test_a_claim_invented_on_a_panel_is_checked_like_a_spoken_one():
+    """The panel was the one place a fabrication could hide: burned-in text
+    is a claim about a real animal exactly as much as narration is."""
+    profile = PetProfile.load(EXAMPLE_PROFILE)
+    script = {
+        "scenes": [
+            {
+                "narration": "來看看我",
+                "subtitle": "來看看我",
+                "overlay": {"template": "info_sidebar", "tags": ["最愛跟小孩玩"]},
+            }
+        ]
+    }
+    llm = FakeLLM('{"unsupported": [{"quote": "最愛跟小孩玩", "why": "資料沒提過小孩"}]}')
+
+    claims = find_unsupported_claims(script, profile, llm)
+
+    assert any("最愛跟小孩玩" in claim for claim in claims)
+    assert "最愛跟小孩玩" in llm.prompts[0]

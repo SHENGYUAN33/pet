@@ -22,6 +22,10 @@
       "background": {
         "mode": "keep",
         "prompt": null
+      },
+      "overlay": {
+        "template": "center_quote",
+        "headline": "我在這裡，等你的溫暖"
       }
     },
     {
@@ -38,6 +42,15 @@
       "background": {
         "mode": "extend",
         "prompt": "a dog resting indoors by a window, warm daylight"
+      },
+      "overlay": {
+        "template": "info_sidebar",
+        "tags": [
+          "年齡：2 歲",
+          "性別：男生",
+          "疫苗：已完成",
+          "已結紮"
+        ]
       }
     },
     {
@@ -54,6 +67,10 @@
       "background": {
         "mode": "keep",
         "prompt": null
+      },
+      "overlay": {
+        "template": "speech_bubble",
+        "quote": "球球是我的最愛"
       }
     },
     {
@@ -71,6 +88,9 @@
       "background": {
         "mode": "replace",
         "prompt": "a blurred living room by a sunlit window, bokeh"
+      },
+      "overlay": {
+        "template": "none"
       }
     },
     {
@@ -88,6 +108,9 @@
       "background": {
         "mode": "extend",
         "prompt": "a dog sitting indoors, plain wall behind, soft light"
+      },
+      "overlay": {
+        "template": "none"
       }
     },
     {
@@ -104,6 +127,11 @@
       "background": {
         "mode": "keep",
         "prompt": null
+      },
+      "overlay": {
+        "template": "contact_card",
+        "cta_text": "預約見面",
+        "contact_info": "範例動物之家"
       }
     }
   ],

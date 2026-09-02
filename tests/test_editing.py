@@ -548,3 +548,51 @@ def test_the_pets_details_drop_clear_of_the_ai_disclosure(tmp_path):
     plain, labelled = (" ".join(cmd) for cmd in commands)
     assert f"y={config.DECOR_INFO_CARD_Y}:" in plain
     assert f"y={config.DECOR_INFO_CARD_Y + config.DECOR_DISCLOSURE_CLEARANCE}:" in labelled
+
+
+def test_a_composed_overlay_is_burned_into_the_shot(sample_photo, tmp_path):
+    """The Pillow-drawn panel has to survive the encode, and the clip has to
+    stay exactly the delivery size — every clip is stream-copied into the
+    finished video, so a shot that came out a different shape breaks concat.
+    """
+    from PIL import Image
+
+    from pipeline.editing import FRAME_HEIGHT as H
+    from pipeline.editing import FRAME_WIDTH as W
+
+    overlay = tmp_path / "overlay.png"
+    panel = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    # A solid magenta block in the middle band, well clear of the subtitle
+    # and of the grey source picture's own colour.
+    panel.paste((255, 0, 255, 255), (200, 700, 880, 1100))
+    panel.save(overlay)
+
+    out = tmp_path / "scene.mp4"
+    build_scene_clip(
+        visual_path=str(sample_photo),
+        duration=0.4,
+        subtitle_text="字幕",
+        output_path=str(out),
+        overlay_path=overlay,
+    )
+
+    assert _probe(out, "stream=width,height").split() == [str(W), str(H)]
+
+    frame = tmp_path / "frame.png"
+    _run(["ffmpeg", "-y", "-i", str(out), "-frames:v", "1", str(frame)])
+    red, green, blue = Image.open(frame).convert("RGB").getpixel((540, 900))
+    assert red > 150 and blue > 150 and green < 100
+
+
+def test_a_missing_overlay_file_leaves_the_shot_alone(sample_photo, tmp_path):
+    """Nothing about a panel is worth failing a render over — the shot is
+    made without it, the same way a dropped template is handled upstream."""
+    out = tmp_path / "scene.mp4"
+    build_scene_clip(
+        visual_path=str(sample_photo),
+        duration=0.4,
+        subtitle_text="字幕",
+        output_path=str(out),
+        overlay_path=tmp_path / "never_drawn.png",
+    )
+    assert out.exists()

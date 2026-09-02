@@ -99,3 +99,54 @@ def test_flags_total_duration_mismatch():
     )
     issues = validate_script_structure(script)
     assert any("does not match declared duration 30" in issue for issue in issues)
+
+
+def _six(overlays=None):
+    """Six well-formed scenes, optionally each wearing an overlay block."""
+    overlays = overlays or {}
+    scenes = []
+    for index in range(6):
+        scene = _scene(index + 1, index * 5, (index + 1) * 5)
+        if index + 1 in overlays:
+            scene["overlay"] = overlays[index + 1]
+        scenes.append(scene)
+    return _script(scenes)
+
+
+def test_scene_without_an_overlay_block_is_fine():
+    assert validate_script_structure(_six()) == []
+
+
+def test_flags_unknown_overlay_template():
+    issues = validate_script_structure(_six({2: {"template": "hologram"}}))
+    assert any("unknown overlay template" in issue for issue in issues)
+
+
+def test_flags_overlay_whose_required_field_is_empty():
+    """The panel silently disappears otherwise: resolve_scene_overlay drops
+    it, and a reviewer sees a bare frame with nothing saying why."""
+    issues = validate_script_structure(_six({3: {"template": "info_sidebar", "tags": []}}))
+    assert any("leaves tags empty" in issue for issue in issues)
+
+
+def test_overlay_with_content_is_not_flagged():
+    script = _six(
+        {
+            1: {"template": "center_quote", "headline": "等你來"},
+            6: {"template": "contact_card", "cta_text": "預約見面"},
+        }
+    )
+    assert validate_script_structure(script) == []
+
+
+def test_flags_a_panel_on_nearly_every_shot():
+    """A panel earns its place by being the exception — on every shot it is a
+    wall of text over the animal the viewer came to see."""
+    script = _six({i: {"template": "center_quote", "headline": f"第{i}句"} for i in range(1, 7)})
+    issues = validate_script_structure(script)
+    assert any("all carry an overlay panel" in issue for issue in issues)
+
+
+def test_overlay_that_is_not_an_object_is_reported():
+    issues = validate_script_structure(_six({4: "center_quote"}))
+    assert any("overlay that is not an object" in issue for issue in issues)

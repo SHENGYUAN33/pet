@@ -31,7 +31,7 @@ _PROMPT_TEMPLATE = """\
   "story_arc": "<一句話說明這支片的場景怎麼走，例如：從收容所的籠子，到公園草地，最後是有陽光的家>",
   "art_direction": "<英文，全片共用的視覺風格，例如：warm afternoon light, shallow depth of field, soft blurred background, realistic photograph>",
   "scenes": [
-    {{"scene_id": 1, "start": 0, "end": 3, "purpose": "hook", "visual_source": "<必須是下方素材清單中的檔名>", "narration": "...", "subtitle": "...", "background": {{"mode": "keep|extend", "prompt": "<英文；mode 是 keep 時填 null>"}}}}
+    {{"scene_id": 1, "start": 0, "end": 3, "purpose": "hook", "visual_source": "<必須是下方素材清單中的檔名>", "narration": "...", "subtitle": "...", "background": {{"mode": "keep|extend", "prompt": "<英文；mode 是 keep 時填 null>"}}, "overlay": {{"template": "none|center_quote|speech_bubble|info_sidebar|contact_card", "headline": null, "quote": null, "tags": [], "cta_text": null, "contact_info": null}}}}
   ],
   "cta": "...",
   "cta_url": "{contact_url}"
@@ -60,6 +60,20 @@ _PROMPT_TEMPLATE = """\
 14. extend 補出來的邊要接得上照片，所以描述的是**照片本來就有的環境**：
     在家裡拍的就寫室內（客廳、臥室、窗邊、地毯），不要憑空寫成公園或戶外
 15. 各鏡頭的 background 要照 story_arc 的順序**往前推進**，**不同鏡頭的 prompt 不可以是同一句話**——同一句重複六次就不是一段旅程，只是同一個場景印六次
+
+關於 overlay（這個鏡頭要不要加版面元件；文字一律繁體中文）：
+16. template 只能是這五個值之一，並依鏡頭的**功能**選擇（不是依鏡頭編號）：
+    - "none"：什麼都不加。**這是預設值，也是大多數鏡頭該用的**
+    - "center_quote"：畫面正中一句大字，填 headline。用在**開場 hook 那一個鏡頭**
+    - "speech_bubble"：對話氣泡，填 quote（寵物自己說的一句短話）。用在**呈現個性的鏡頭**，最多一個
+    - "info_sidebar"：右側資訊欄，填 tags（每項一行，例如「年齡：2歲」「疫苗：已完成」）。用在**介紹基本資料的鏡頭**，最多一個
+    - "contact_card"：結尾行動卡，填 cta_text（例如「預約見面」）與 contact_info。用在**最後一個鏡頭**
+17. 只填該 template 需要的欄位，其他填 null 或空陣列；**要用的那個欄位一定要填**，留空等於這個版面不會出現
+18. **最多只有一半的鏡頭可以有 overlay**，其餘一律 "none"——每個鏡頭都貼版面會蓋住寵物，而字幕已經在傳達訊息了
+19. overlay 的文字**不可以重複字幕已經說過的話**（同一句話在畫面上出現兩次），也不可以寫下方資料裡沒有的事情——
+    **tags 只能寫寵物資料裡真的有的欄位**（年齡、性別、品種、疫苗/結紮狀態、個性標籤），寫上去的每一句都跟旁白一樣會被查核
+20. headline 與 quote 每句不超過 14 個中文字，每個 tag 不超過 12 個中文字（版面會依文字長度自動長高，太長會蓋住寵物）
+21. overlay 的文字**不可以使用 emoji 或任何符號圖案**（版面用的是中文字型，emoji 會變成空白方框）
 
 可用素材清單：
 {asset_list}

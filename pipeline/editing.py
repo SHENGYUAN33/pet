@@ -44,7 +44,7 @@ def wrap_burned_text(text: str, max_units: int) -> str:
     lines: list[str] = []
     current = ""
 
-    for token, separator in _tokens(text):
+    for token, separator in text_tokens(text):
         candidate = current + separator + token if current else token
         if current and _display_width(candidate) > max_units:
             lines.append(current)
@@ -57,9 +57,14 @@ def wrap_burned_text(text: str, max_units: int) -> str:
     return "\n".join(lines)
 
 
-def _tokens(text: str):
+def text_tokens(text: str):
     """(token, separator) pairs: latin words with the space before them, and
-    CJK characters on their own."""
+    CJK characters on their own.
+
+    Public because pipeline/overlay_renderer.py wraps the same mixed
+    zh/latin copy against measured pixel widths rather than against
+    half-width units — where a line breaks is the same question, only the
+    ruler differs."""
     word = ""
     for char in text:
         if char.isspace():
@@ -229,6 +234,7 @@ def build_scene_clip(
     border_width: int | None = None,
     info_card_text: str | None = None,
     stickers: list[tuple[Path, int, int]] | None = None,
+    overlay_path: Path | str | None = None,
 ) -> str:
     """Render one scene's video (no audio): real video or photo (Ken Burns
     zoom) with burned subtitle. Real-footage-first per
@@ -255,7 +261,17 @@ def build_scene_clip(
     (pipeline/stickers.py). They go on last, after the text, because a mark
     covering a subtitle is worse than a subtitle covering a mark — and they
     are pulled in with FFmpeg's `movie` source rather than as extra inputs,
-    which keeps this a single -vf chain."""
+    which keeps this a single -vf chain.
+
+    overlay_path is a full-frame transparent PNG laid on top of everything
+    (pipeline/overlay_renderer.py): the information panels, speech bubbles
+    and held quotes that were laid out in Pillow because their geometry
+    depends on how wide the text actually renders. It goes on last, above
+    the marks and the burned text, because it is the densest thing on the
+    frame — a sparkle over a panel of facts is worse than a panel over a
+    sparkle — and its templates already keep clear of the subtitle band. It
+    arrives as a file rather than as a second -i input for the same reason
+    the stickers do: `movie` keeps this one -vf chain and one encode."""
     is_photo = Path(visual_path).suffix.lower() in PHOTO_EXTENSIONS
 
     if is_photo:
@@ -335,6 +351,15 @@ def build_scene_clip(
         video_filter += (
             f"[dec{index}];movie='{_escape_filter_path(str(sticker_path))}'[st{index}];"
             f"[dec{index}][st{index}]overlay={x}:{y}"
+        )
+
+    if overlay_path is not None and Path(overlay_path).exists():
+        # Same label dance as a sticker, at 0:0: the PNG is already the size
+        # of the frame, so every coordinate stays in the Python that could
+        # measure the text rather than being recomputed in filter syntax.
+        video_filter += (
+            f"[ovbase];movie='{_escape_filter_path(str(overlay_path))}'[ovlay];"
+            f"[ovbase][ovlay]overlay=0:0"
         )
 
     cmd = [

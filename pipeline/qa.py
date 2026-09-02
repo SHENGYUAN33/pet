@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pipeline import config
 from pipeline.background import BackgroundMode
+from pipeline.overlay_renderer import REQUIRED_FIELDS, OverlayTemplate
 
 
 def validate_script_structure(script: dict) -> list[str]:
@@ -36,6 +37,7 @@ def validate_script_structure(script: dict) -> list[str]:
             issues.append(f"scene {scene_id} has an empty subtitle")
 
         issues.extend(_background_issues(scene, scene_id))
+        issues.extend(_overlay_issues(scene, scene_id))
 
     if scenes and declared_duration is not None and expected_start != declared_duration:
         issues.append(
@@ -51,6 +53,16 @@ def validate_script_structure(script: dict) -> list[str]:
         issues.append(
             "scenes " + ", ".join(str(i) for i in repeated) + " share one background description "
             "— the setting does not move through the story"
+        )
+
+    crowded = _overloaded_overlays(scenes)
+    if crowded:
+        # A panel earns its place by being the exception. On every shot it is
+        # not a layout, it is a wall of text over the animal the viewer came
+        # to see — and the subtitle is already carrying the message.
+        issues.append(
+            "scenes " + ", ".join(str(i) for i in crowded) + " all carry an overlay panel "
+            "— the panels stop reading as emphasis and start covering the pet"
         )
 
     if scenes and all(_replaces_its_setting(scene) for scene in scenes):
@@ -111,3 +123,66 @@ def _background_issues(scene: dict, scene_id) -> list[str]:
         issues.append(f"scene {scene_id} asks for a {mode} background but describes nothing")
 
     return issues
+
+
+def _overloaded_overlays(scenes: list[dict]) -> list[int]:
+    """scene_ids carrying a panel, when nearly every shot carries one.
+
+    Reported at the film level rather than per scene because no single panel
+    is the mistake: the ratio is.
+    """
+    with_panel = [
+        scene.get("scene_id")
+        for scene in scenes
+        if isinstance(scene.get("overlay"), dict)
+        and scene["overlay"].get("template") not in (None, OverlayTemplate.NONE.value)
+    ]
+    if (
+        len(scenes) >= config.MIN_SCENES
+        and len(with_panel) > len(scenes) * config.OVERLAY_MAX_SHARE
+    ):
+        return with_panel
+    return []
+
+
+def _overlay_issues(scene: dict, scene_id) -> list[str]:
+    """A scene's overlay block, checked for the mistakes that make it render
+    nothing rather than what was asked.
+
+    Same contract as _background_issues: none of these is fatal — the shot is
+    simply made without a panel — which is precisely why they have to be
+    reported. A script that asked for an information sidebar and silently got
+    a bare frame is worse than one that said so.
+    """
+    block = scene.get("overlay")
+    if block is None:
+        return []
+    if not isinstance(block, dict):
+        return [f"scene {scene_id} has an overlay that is not an object"]
+
+    template = block.get("template")
+    valid = {t.value for t in OverlayTemplate}
+    if template not in valid:
+        return [
+            (
+                f"scene {scene_id} asks for unknown overlay template {template!r} "
+                f"(expected one of {sorted(valid)})"
+            )
+        ]
+    if template == OverlayTemplate.NONE.value:
+        return []
+
+    required = REQUIRED_FIELDS[OverlayTemplate(template)]
+    for field in required:
+        value = block.get(field)
+        if isinstance(value, list):
+            if any(str(item).strip() for item in value):
+                return []
+        elif str(value or "").strip():
+            return []
+    return [
+        (
+            f"scene {scene_id} asks for a {template} overlay but leaves "
+            f"{' / '.join(required)} empty — the panel was dropped"
+        )
+    ]

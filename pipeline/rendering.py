@@ -25,6 +25,7 @@ from pipeline.i2v import animate_photo, get_video_provider
 from pipeline.identity import check_identity, get_vlm_provider
 from pipeline.montage import scene_sources
 from pipeline.narration import silence_scenes, synthesize_scenes
+from pipeline.overlay_renderer import render_scene_overlay, resolve_scene_overlay
 from pipeline.profile import PetProfile
 from pipeline.progress import ProgressCallback, noop
 from pipeline.scene_tracking import NoopSceneTracker, SceneTracker
@@ -280,6 +281,31 @@ def render_script(
     first_scene_id = script["scenes"][0]["scene_id"] if script["scenes"] else None
     info_card_text = decoration.identity_line(profile) if config.DECOR_ENABLED else None
 
+    def overlay_for(scene: dict, scene_id: int) -> Path | None:
+        """This shot's composed panel, drawn into the job's work_dir.
+
+        Redrawn rather than cached across runs: it costs milliseconds, and a
+        resumed run reuses the whole finished clip anyway (see
+        reusable_clips), so the only thing a cache here could do is serve a
+        stale panel after a reviewer edited the wording.
+
+        Needs the accent, so it is off whenever the decoration is — a panel
+        outlined in a colour the rest of the video isn't wearing belongs to a
+        different video.
+        """
+        if resolved_accent is None:
+            return None
+        spec = resolve_scene_overlay(scene)
+        if spec is None:
+            return None
+        return render_scene_overlay(
+            spec,
+            width=FRAME_WIDTH,
+            height=FRAME_HEIGHT,
+            accent=resolved_accent,
+            output_path=work_dir / f"scene_{scene_id}_overlay.png",
+        )
+
     video_clip_paths = []
     ordered_audio_paths = []
     scene_count = len(script["scenes"])
@@ -402,6 +428,7 @@ def render_script(
                     )
                     if resolved_accent
                     else None,
+                    overlay_path=overlay_for(scene, scene_id),
                 )
         except Exception as e:
             # Boundary: FFmpeg and the I2V providers are external. Record

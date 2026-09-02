@@ -61,7 +61,7 @@
 
 素材組成建議比例（避免一開始做「完全生成式影片」）：60% 真實影片剪輯 / 20% 照片動態化 / 10% 字幕與貼圖 / 10% AI 生成場景。
 
-目前所在階段：**MVP 開發中（第九個切片：版面裝飾層，並把背景置換降級成人工專用）**。
+目前所在階段：**MVP 開發中（第十二個切片：版型覆蓋層，Pillow 動態排版 ＋ FFmpeg 單次疊加）**。
 
 - 第一個切片（多寵物管理／PostgreSQL 資料層）：`pipeline/db.py`／`pipeline/models.py`／`pipeline/pet_repo.py`，管理 CLI `pipeline/manage.py`（`init-db`／`import-profile`／`list-pets`／`show-pet`）
 - 第二個切片（分鏡編輯／單鏡頭重生）：渲染邏輯抽到 `pipeline/rendering.py`（`render_script`，`generate_video` 與 `regenerate_scene` 共用，不重複寫一次），每次生成都在 `storage/output/<pet_id>/gen_<8碼token>/` 有自己的子資料夾（不再共用同一層、不會互相覆蓋鏡頭檔案）。`pipeline/regen.py` 提供 `apply_scene_overrides`（純函式）＋ `regenerate_scene`（patch 單一鏡頭素材/字幕/旁白後只重新渲染，不重跑 LLM），CLI 是 `pipeline/regenerate.py`。`GenerationJob` 現在存完整 `script_json`，`parent_job_id` 把重新生成的版本連回原始 job——**每次重生都是新的一筆紀錄，不覆蓋舊的**，原始輸出檔案與紀錄都保留供追溯。
@@ -142,6 +142,19 @@
     - **數量依風格**：萌系兩個（愛心＋閃亮）、反差幽默兩個（閃亮）、**溫暖故事只有一個爪印**——一支講辛苦過的動物的片子不該灑滿星星。
     - 疊加用 FFmpeg 的 `movie` 來源接在既有 filter chain 後面，不需要多開輸入、也不用改成 filter_complex。貼圖放**最後**（文字之後）：圖蓋到字幕比字幕蓋到圖糟。
     - `pillow` 因此進了主要依賴（原本只在 `[i2v]` extras 裡）。
+  - **版型覆蓋層（第十二個切片）**：`pipeline/overlay_renderer.py`——資訊欄、對話氣泡、置中大字、結尾行動卡。這是 §4「字幕/貼圖/特效」裡 drawtext 做不到的那一半。
+    - **為什麼不是 drawbox＋drawtext**：字幕是「一個字串放在一個位置」，drawtext 剛好；版面不是——圓角半透明底板的**高度取決於文字換行後有幾行**、氣泡要有指向寵物的尖角、每一行要對著底板寬度量。用 FFmpeg 表達等於在已經很長的 filter chain 裡用表達式語法算每一個座標，而且**FFmpeg 沒辦法回答「這個字串會有多寬」**。
+    - **分工跟 `stickers.py` 同一個模式，只是複雜一級**：Pillow 排版（因為它量得到文字）→ 存成一張全畫面透明 PNG → `build_scene_clip` 用 `movie=` 接在既有 `-vf` 鏈尾端疊上去。**沒有改成第二個 `-i` ＋ `filter_complex`**：`movie=` 就是貼圖已經在用的機制，能維持單一 `-vf`、單次編碼，也不用重寫指令組裝。疊在**最上層**（文字、貼圖之後），因為它是畫面上資訊密度最高的一層。
+    - **spec 放在 `overlay_renderer.py`，不放 `pipeline/models.py`**：後者是 SQLAlchemy ORM 的資料表定義（`tests/test_migrations.py` 拿它跟真實 DB schema 比對），放一個 pydantic 腳本模型進去是類別錯誤。位置比照 `background.py`（`SceneBackground` 跟 `resolve_scene_background` 同一個模組）。
+    - **schema**：每個 scene 多一個 `overlay: {template, headline, quote, tags[], cta_text, contact_info}`，`template` 是 `none`／`center_quote`／`speech_bubble`／`info_sidebar`／`contact_card`。**只有文案，沒有座標/顏色/字級**——那些是設計系統，在 `config.OVERLAY_*`，不是讓 7B 模型每次自己編（跟 `DECOR_*` 同一條理由）。
+    - **腳本 prompt 按「鏡頭的功能」分配版型，不是按鏡頭編號**：這裡的鏡頭數是 5-7（`config.MIN_SCENES`/`MAX_SCENES`），寫死「Scene 1/2/3」會對不上。規則是 hook 用 `center_quote`、個性鏡頭用 `speech_bubble`、基本資料用 `info_sidebar`、最後一顆用 `contact_card`，其餘 `none`。
+    - **版面文字會被事實查核**（`fact_check._script_text()` 現在把 overlay 的文字一起讀進去）：燒在畫面上的「疫苗：已完成」跟旁白講出來的完全一樣是對一隻真實動物的陳述，而且**在靜音觀看的平台上，畫面上那份才是真正被接收到的**。不納入的話，版面就會是唯一一個捏造內容抓不到的地方。反過來也成立：只寫在版面上的必要揭露算有揭露。
+    - **QA 新增四項**（`pipeline/qa.py`）：未知的 template、選了版型卻沒填必要欄位（那塊板子會靜悄悄消失）、overlay 不是物件、以及**超過一半的鏡頭都有版面**（每顆都貼就不是強調，只是一面蓋住寵物的文字牆）。
+    - **字型是 `config.OVERLAY_FONT_FILE`，預設就是字幕用的那個**（`DRAWTEXT_FONT_FILE`，msjh）：同一個畫面兩種字型看起來像兩支影片疊在一起。也**不新增字型檔**。
+    - 實測踩到並修掉的兩件事：**emoji 會變成空白方框**（微軟正黑體沒有 emoji 字符，「預約見面 🐾」變成「預約見面 □」，看起來像影片壞掉而不是少了裝飾）——所以 `strip_unrenderable()` 依 Unicode 區段濾掉，**用區段而不是探測字型覆蓋率**，否則不同機器會產出不同畫面；prompt 也加了「不要用 emoji」，但比照 `SUBTITLE_MAX_UNITS` 那條，**畫面不可以依賴 7B 模型聽話**。以及**結尾行動卡貼著字幕**——安全帶的下緣是為貼圖（小、稀疏）訂的，一塊板子直接坐在上面會跟字幕連成一塊，而字幕是往上長的，所以多了 `config.OVERLAY_SUBTITLE_CLEARANCE`。
+    - **沒有 migration、也沒有新的欄位**：版面是腳本的一部分，跟著既有的 `script_json` 走，續跑/單鏡頭重生自動帶著。PNG 畫在該次生成的 `work_dir/scene_<id>_overlay.png`，**不跨次快取**——它只要幾毫秒，而續跑本來就重用整支完成的 clip，快取唯一能做的事是在審核者改完文案後端出一張舊的。
+    - **網頁端還沒接**（沒有讓審核者在 UI 上改版型/文案的欄位），這一步刻意只做到腳本層＋渲染層。
+
   - **給非工程使用者的表單化 UI**：Pet Profile 不再只有 JSON textarea——`webapp/static/index.html` 現在是中文欄位表單（基本資料／健康狀態勾選／個性標籤 chip 編輯器／故事與領養條件／照片影片清單含縮圖／外觀特徵摺疊區），JSON 直編退居「進階」摺疊區（可「套用到上方表單」，但仍要按表單的儲存鈕才寫入 DB）。表單會保留 schema 中沒有對應 widget 的欄位再合併回去，不會靜默丟資料。**檔案路徑欄位改成用選的**：瀏覽器拿不到本機檔案的真實路徑，所以「從電腦選擇」＝開 OS 檔案對話框→上傳到 `storage/assets/<pet_id>/`→用存下來那份的相對路徑；新增 `POST /api/pets/{pet_id}/assets`（副檔名 allowlist、檔名淨化、同名不覆蓋、pet_id 先做字元檢查＋ `storage/assets/` 包含性檢查再查 DB）、`GET /api/pets/{pet_id}/assets`（列出已上傳檔案給下拉選單）、`GET /api/profile-files`（匯入表單改成下拉選單），照片縮圖走唯讀的 `/media` static mount。單鏡頭重生的「換素材」也從手打 asset_id 改成從該寵物素材下拉選。上傳需要先有 pet_id（新寵物要先存檔才能傳照片）。
 
 `GenerationJob` 現在是**開跑就建檔**：`start_generation_job()` 在慢工作開始前先寫一筆 `status=running`，結束時 `finish_generation_job()`（`done`＋ output_path/script_json）或 `fail_generation_job()`（`failed`＋錯誤原因）收尾，所以跑到一半崩潰／重啟不再是「完全沒紀錄」。狀態值是 `pipeline/models.py` 的 `JobStatus`（`running`／`done`／`failed`）。

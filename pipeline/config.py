@@ -453,3 +453,71 @@ DECOR_STICKER_SETS = {
     "contrast_humor": ["sparkle", "sparkle"],
     "": [],
 }
+
+# --- 版型覆蓋層 / Composed overlays (docs/architecture.md §4) -----------------
+# The other half of the editing stage's overlay work, and the half drawtext
+# cannot do. A subtitle is one string in one place, so a drawtext filter is
+# the right tool; an information panel is a rounded translucent plate, a
+# stack of lines each measured against the plate's width, an icon beside
+# each, and a speech bubble needs a tail pointing at the animal. Expressing
+# that as drawbox+drawtext means computing every coordinate in FFmpeg
+# expression syntax against a chain that is already long, with no way to ask
+# how wide a string will actually be.
+#
+# So the composed pieces are laid out in Python with Pillow — which can
+# measure text — and handed to FFmpeg as a single transparent PNG. Same
+# split as pipeline/stickers.py, one step up in complexity: Pillow draws,
+# FFmpeg composites, and the clip is still one encode.
+#
+# This layer is deterministic and never touches the animal, so like the rest
+# of the decoration it needs no AI-generation disclosure.
+OVERLAY_ENABLED = os.getenv("OVERLAY_ENABLED", "1").lower() not in {"0", "false", "no"}
+# Same typeface as the burned-in subtitle by default: two different fonts on
+# one frame reads as two different videos stacked on each other.
+OVERLAY_FONT_FILE = os.getenv("OVERLAY_FONT_FILE", DRAWTEXT_FONT_FILE)
+# The band a panel may occupy, matching the stickers' safe zone: above it are
+# the pet's details and the AI-generation disclosure, below it the subtitle.
+# A panel that lands on either covers something a viewer has to read.
+OVERLAY_SAFE_TOP = int(os.getenv("OVERLAY_SAFE_TOP", str(DECOR_STICKER_SAFE_TOP)))
+OVERLAY_SAFE_BOTTOM = int(os.getenv("OVERLAY_SAFE_BOTTOM", str(DECOR_STICKER_SAFE_BOTTOM)))
+OVERLAY_MARGIN = int(os.getenv("OVERLAY_MARGIN", "48"))
+# Plate geometry. The plate is white rather than accent-coloured so the text
+# on it stays black-on-light at any accent; the accent appears as the rule
+# and the outline, which is what ties the panel to the rest of the video.
+OVERLAY_PANEL_OPACITY = float(os.getenv("OVERLAY_PANEL_OPACITY", "0.82"))
+OVERLAY_PANEL_RADIUS = int(os.getenv("OVERLAY_PANEL_RADIUS", "24"))
+OVERLAY_PANEL_PADDING = int(os.getenv("OVERLAY_PANEL_PADDING", "28"))
+OVERLAY_OUTLINE_WIDTH = int(os.getenv("OVERLAY_OUTLINE_WIDTH", "3"))
+OVERLAY_TEXT_COLOUR = os.getenv("OVERLAY_TEXT_COLOUR", "0x282828")
+# Type scale. Three sizes, not a continuum: a headline, the body of a list,
+# and the quote in a bubble, which sits between them.
+OVERLAY_HEADLINE_SIZE = int(os.getenv("OVERLAY_HEADLINE_SIZE", "58"))
+OVERLAY_QUOTE_SIZE = int(os.getenv("OVERLAY_QUOTE_SIZE", "40"))
+OVERLAY_BODY_SIZE = int(os.getenv("OVERLAY_BODY_SIZE", "30"))
+OVERLAY_LINE_GAP = int(os.getenv("OVERLAY_LINE_GAP", "14"))
+# Sidebar width as a fraction of the frame. Wide enough for "疫苗：已完成"
+# on one line at the body size, narrow enough to leave the animal visible —
+# a panel covering half the picture defeats the point of the picture.
+OVERLAY_SIDEBAR_RATIO = float(os.getenv("OVERLAY_SIDEBAR_RATIO", "0.42"))
+# The bubble's tail: how far it drops below the plate and how wide its base
+# is. Without it the plate is a caption box, not something the pet is saying.
+OVERLAY_BUBBLE_TAIL_HEIGHT = int(os.getenv("OVERLAY_BUBBLE_TAIL_HEIGHT", "34"))
+OVERLAY_BUBBLE_TAIL_WIDTH = int(os.getenv("OVERLAY_BUBBLE_TAIL_WIDTH", "38"))
+# Longest a single overlay string may be before it is truncated, per field.
+# Pillow wraps rather than clipping, so the failure mode here is a panel that
+# grows until it fills the frame, not text running off the edge.
+OVERLAY_MAX_CHARS = int(os.getenv("OVERLAY_MAX_CHARS", "40"))
+# Most lines a list-shaped panel will show. A model handed a whole profile
+# will happily list twelve facts; four is what fits beside the animal.
+OVERLAY_MAX_TAGS = int(os.getenv("OVERLAY_MAX_TAGS", "4"))
+# Share of a video's shots that may carry a panel before pipeline/qa.py says
+# so. A panel earns its place by being the exception — on every shot it stops
+# reading as emphasis and just covers the animal.
+OVERLAY_MAX_SHARE = float(os.getenv("OVERLAY_MAX_SHARE", "0.6"))
+# Gap between a bottom-anchored panel and the top of the subtitle band. The
+# band's floor was set for stickers — small, sparse marks — and a plate
+# resting on it reads as one block with the subtitle underneath. The subtitle
+# also grows upward as it wraps (it is anchored by the bottom of its text
+# block), so the clearance is what a third line eats into instead of the
+# panel.
+OVERLAY_SUBTITLE_CLEARANCE = int(os.getenv("OVERLAY_SUBTITLE_CLEARANCE", "70"))
