@@ -81,6 +81,8 @@ def render_script(
     background_mode: BackgroundMode = BackgroundMode.EXTEND,
     image_provider: str = "comfy",
     background_prompt: str | None = None,
+    accent_colour: str | None = None,
+    border_width: int | None = None,
     on_progress: ProgressCallback = noop,
     scene_tracker: SceneTracker | None = None,
 ) -> Path:
@@ -110,6 +112,14 @@ def render_script(
     repeating one setting six times. The script's `art_direction` is added
     to every one of those descriptions, which is what keeps the shots
     looking like one film.
+
+    accent_colour and border_width override the look the script's style
+    would otherwise pick (pipeline/decoration.py). They are the reviewer's
+    own taste, which nothing else in the pipeline can know.
+
+    accent_colour and border_width override the look the script's style
+    would otherwise pick (pipeline/decoration.py). They are the reviewer's
+    own taste, which nothing else in the pipeline can know.
 
     background_scenes/background_mode/background_prompt override the script
     for the scene_ids named, and are what a reviewer correcting one shot
@@ -258,8 +268,10 @@ def render_script(
     # The look this video is dressed in, decided once from the script's own
     # style. None when decoration is switched off, which build_scene_clip
     # reads as "leave the picture alone".
-    accent_colour = (
-        decoration.palette_for(script.get("style", ""))["accent"] if config.DECOR_ENABLED else None
+    resolved_accent = (
+        decoration.resolve_accent(script.get("style", ""), accent_colour)
+        if config.DECOR_ENABLED
+        else None
     )
     # The pet's details belong on the opening shot and nowhere else: by the
     # second shot the viewer either knows or has scrolled past.
@@ -316,7 +328,8 @@ def render_script(
                     duration=duration,
                     subtitle_text=scene["subtitle"],
                     output_path=str(clip_path),
-                    accent_colour=accent_colour,
+                    accent_colour=resolved_accent,
+                    border_width=border_width,
                 )
             else:
                 visual_path = visual_paths[0]
@@ -375,7 +388,8 @@ def render_script(
                     subtitle_text=scene["subtitle"],
                     output_path=str(clip_path),
                     disclosure_text=disclosure_for(background),
-                    accent_colour=accent_colour,
+                    accent_colour=resolved_accent,
+                    border_width=border_width,
                     info_card_text=info_card_text if scene_id == first_scene_id else None,
                 )
         except Exception as e:

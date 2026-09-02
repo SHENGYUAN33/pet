@@ -66,6 +66,8 @@ def regenerate_scene(
     background_mode: BackgroundMode = BackgroundMode.EXTEND,
     image_provider: str = "comfy",
     background_prompt: str | None = None,
+    accent_colour: str | None = None,
+    border_width: int | None = None,
     on_progress: ProgressCallback = noop,
 ) -> tuple[str, int]:
     """Re-render a whole video from job_id's script with one scene patched,
@@ -116,6 +118,8 @@ def regenerate_scene(
         background_mode=background_mode.value,
         image_provider=image_provider,
         background_prompt=background_prompt,
+        decor_accent=accent_colour,
+        decor_border_width=border_width,
     )
     try:
         final_path = _render_revision(
@@ -132,6 +136,8 @@ def regenerate_scene(
             background_mode=background_mode,
             image_provider=image_provider,
             background_prompt=background_prompt,
+            accent_colour=accent_colour,
+            border_width=border_width,
             on_progress=on_progress,
         )
     except Exception as e:
@@ -156,6 +162,8 @@ def _render_revision(
     background_mode: BackgroundMode,
     image_provider: str,
     background_prompt: str | None,
+    accent_colour: str | None,
+    border_width: int | None,
     on_progress: ProgressCallback,
 ) -> str:
     """The body of regenerate_scene() — split out so the job row is closed as
@@ -207,6 +215,8 @@ def _render_revision(
         background_mode=background_mode,
         image_provider=image_provider,
         background_prompt=background_prompt,
+        accent_colour=accent_colour,
+        border_width=border_width,
         on_progress=scaled(on_progress, 0.05, 0.98),
         scene_tracker=DatabaseSceneTracker(new_job_id),
     )

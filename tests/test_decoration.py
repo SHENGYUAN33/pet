@@ -197,3 +197,28 @@ class TestRenderedShot:
         chain = " ".join(recorded["cmd"])
         assert "vignette" not in chain
         assert "drawbox" not in chain
+
+
+def test_a_chosen_accent_beats_the_styles_own():
+    """The reviewer's taste is something nothing else in the pipeline can
+    know, so it wins — the same way a named scene beats the script."""
+    assert decoration.resolve_accent("cute", "0x123456") == "0x123456"
+
+
+def test_a_blank_choice_is_not_a_colour():
+    """An empty form field means "I didn't pick one", not "paint it with
+    nothing"."""
+    assert decoration.resolve_accent("cute", "   ") == decoration.palette_for("cute")["accent"]
+    assert decoration.resolve_accent("cute", None) == decoration.palette_for("cute")["accent"]
+
+
+def test_a_chosen_border_width_is_used():
+    chain = decoration.border_filter("0xFF8FA3", FRAME_WIDTH, FRAME_HEIGHT, thickness=20)
+
+    assert ":t=20" in chain
+
+
+def test_no_chosen_width_falls_back_to_the_configured_one():
+    chain = decoration.border_filter("0xFF8FA3", FRAME_WIDTH, FRAME_HEIGHT)
+
+    assert f":t={config.DECOR_BORDER_WIDTH}" in chain

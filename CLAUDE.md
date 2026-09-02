@@ -129,6 +129,12 @@
     - 邊框是**畫在畫面內**（drawbox）而不是外加，每個 clip 都必須維持一模一樣的輸出尺寸，否則 concat 就不能再 stream-copy。
     - **字幕換行**（`wrap_burned_text`）：drawtext 不會自動換行，超過畫面寬度就是左右被裁掉、而且不報錯。實測腳本模型寫出 46 字的英文字幕時整句被切掉兩端。中文按字斷、英文按空白斷，一個中文字算 2 個半形單位。字幕的 y 座標改成**以文字區塊底部對齊**（`y=h-200-text_h`），兩行字幕才會往上長而不是掉出畫面。
     - 這次也修掉一個**我自己造成的回歸**：背景規則裡「一律用英文」講太多次，7B 模型把它套用到整個輸出，`subtitle` 全變成英文。規則已改成明確限定範圍——只有 `background.prompt` 和 `art_direction` 是英文，`narration`／`subtitle`／`title`／`story_arc` 一律繁體中文。
+  - **外觀調整工具＋方向檢查（第十個切片）**：邊框主色與粗細變成網頁上可以調的東西，而不是只能改 `.env`。
+    - `GenerateRequest`／`RegenerateSceneRequest` 多了 `accent_colour`／`border_width`，存進 `GenerationJob.decor_accent`／`decor_border_width`（migration `0d2302d7007d`）。跟其他設定同一個理由：**續跑必須把同一支影片做完**，半支換了顏色就是另一支影片。留白＝照風格的預設色。
+    - **`GET /api/pets/{id}/decor-preview` 即時預覽**：用**同一個 `build_scene_clip`** 渲染 0.2 秒再抽一張影格，約 **450ms**。走同一條渲染流程是刻意的——預覽跟實際輸出不可能對不起來。用整支影片來調邊框等於每次猜要等三分鐘，那不叫調整。
+    - 資訊卡在有 AI 揭露標示時會往下讓開（`config.DECOR_DISCLOSURE_CLEARANCE`）：兩個都在畫面上方，貼在一起會看起來像一塊亂糟糟的東西（實測）。
+    - **一致性檢查補上「方向」這一題**：實測一顆「從上往下拍的貓」被合成進「平視角的房間」，VLM 的描述是 *"The cat is playfully falling over"*——它看到了，但**判定通過**，因為我只問了「幾隻／身體完不完整／有沒有在場景裡」，而貓確實躺在地毯上、身體也完整。**沒有人去讀那句描述。** 現在多問一題 `upright_in_the_scene`，同一張圖就被標記了。
+    - 這也是 `replace` 真正的結構性問題：**背景生成器對照片的拍攝角度、主體比例、地面在哪裡一無所知**。SDXL 想畫平視角的房間就畫，照片是俯拍的貓，兩個視角根本不相容。這不是調參數能修的，也正是它被降級成人工專用的原因。
   - **給非工程使用者的表單化 UI**：Pet Profile 不再只有 JSON textarea——`webapp/static/index.html` 現在是中文欄位表單（基本資料／健康狀態勾選／個性標籤 chip 編輯器／故事與領養條件／照片影片清單含縮圖／外觀特徵摺疊區），JSON 直編退居「進階」摺疊區（可「套用到上方表單」，但仍要按表單的儲存鈕才寫入 DB）。表單會保留 schema 中沒有對應 widget 的欄位再合併回去，不會靜默丟資料。**檔案路徑欄位改成用選的**：瀏覽器拿不到本機檔案的真實路徑，所以「從電腦選擇」＝開 OS 檔案對話框→上傳到 `storage/assets/<pet_id>/`→用存下來那份的相對路徑；新增 `POST /api/pets/{pet_id}/assets`（副檔名 allowlist、檔名淨化、同名不覆蓋、pet_id 先做字元檢查＋ `storage/assets/` 包含性檢查再查 DB）、`GET /api/pets/{pet_id}/assets`（列出已上傳檔案給下拉選單）、`GET /api/profile-files`（匯入表單改成下拉選單），照片縮圖走唯讀的 `/media` static mount。單鏡頭重生的「換素材」也從手打 asset_id 改成從該寵物素材下拉選。上傳需要先有 pet_id（新寵物要先存檔才能傳照片）。
 
 `GenerationJob` 現在是**開跑就建檔**：`start_generation_job()` 在慢工作開始前先寫一筆 `status=running`，結束時 `finish_generation_job()`（`done`＋ output_path/script_json）或 `fail_generation_job()`（`failed`＋錯誤原因）收尾，所以跑到一半崩潰／重啟不再是「完全沒紀錄」。狀態值是 `pipeline/models.py` 的 `JobStatus`（`running`／`done`／`failed`）。

@@ -499,3 +499,52 @@ def test_a_cjk_character_counts_as_two_latin_ones():
 
     assert _display_width("貓") == 2
     assert _display_width("ab") == 2
+
+
+def test_the_pets_details_drop_clear_of_the_ai_disclosure(tmp_path):
+    """Both sit at the top of the frame; stacked without a gap they read as
+    one cluttered block rather than two separate things."""
+    photo = tmp_path / "photo.png"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=gray:s=640x480:d=1",
+            "-frames:v",
+            "1",
+            str(photo),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    commands = []
+    real_run = subprocess.run
+
+    def capture(cmd, *args, **kwargs):
+        if cmd and cmd[0] == "ffmpeg":
+            commands.append(cmd)
+        return real_run(cmd, *args, **kwargs)
+
+    from pipeline import editing
+
+    editing.subprocess.run = capture
+    try:
+        for name, disclosure in (("plain", None), ("labelled", "部分畫面由 AI 創意生成")):
+            build_scene_clip(
+                visual_path=str(photo),
+                duration=0.2,
+                subtitle_text="字幕",
+                output_path=str(tmp_path / f"{name}.mp4"),
+                accent_colour="0xFF8FA3",
+                info_card_text="豆豆 · 2歲",
+                disclosure_text=disclosure,
+            )
+    finally:
+        editing.subprocess.run = real_run
+
+    plain, labelled = (" ".join(cmd) for cmd in commands)
+    assert f"y={config.DECOR_INFO_CARD_Y}:" in plain
+    assert f"y={config.DECOR_INFO_CARD_Y + config.DECOR_DISCLOSURE_CLEARANCE}:" in labelled

@@ -23,16 +23,19 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import subprocess
+import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
-from pipeline import config
+from pipeline import config, decoration
 from pipeline.background import BackgroundMode
+from pipeline.editing import PHOTO_EXTENSIONS, build_scene_clip
 from pipeline.pet_repo import (
     approve_generation_job,
     cleanup_generation_job,
@@ -242,6 +245,10 @@ class GenerateRequest(BaseModel):
     background_mode: BackgroundMode = BackgroundMode.EXTEND
     background_prompt: str | None = None
     image_provider: str = "comfy"
+    #: The reviewer's own look, when they picked one. None keeps the colour
+    #: the script's style would have chosen.
+    accent_colour: str | None = None
+    border_width: int | None = None
     recap_unused_assets: bool = False
 
 
@@ -259,6 +266,63 @@ class RegenerateSceneRequest(BaseModel):
     background_mode: BackgroundMode = BackgroundMode.EXTEND
     background_prompt: str | None = None
     image_provider: str = "comfy"
+    accent_colour: str | None = None
+    border_width: int | None = None
+
+
+@app.get("/api/pets/{pet_id}/decor-preview")
+def api_decor_preview(
+    pet_id: str,
+    style: str = "cute",
+    accent_colour: str | None = None,
+    border_width: int | None = None,
+):
+    """One still frame dressed exactly as a real shot would be.
+
+    Tuning a border by rendering a whole video means a three-minute wait per
+    guess, which is not tuning. This runs the same build_scene_clip the
+    pipeline uses — a fraction of a second of it — and hands back the middle
+    frame, so what the reviewer is looking at cannot drift from what they
+    will get.
+    """
+    profile = get_pet(pet_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail=f"No pet found with id {pet_id!r}")
+
+    photo = next(
+        (a for a in profile.media.assets if Path(a.url).suffix.lower() in PHOTO_EXTENSIONS),
+        None,
+    )
+    if photo is None:
+        raise HTTPException(status_code=400, detail="這隻寵物還沒有照片，沒有東西可以預覽")
+    source = config.ASSETS_DIR / pet_id / Path(photo.url).name
+    if not source.exists():
+        raise HTTPException(status_code=400, detail=f"素材檔案不存在：{source.name}")
+
+    preview_dir = Path(tempfile.mkdtemp(prefix="decor-preview-"))
+    try:
+        clip = preview_dir / "preview.mp4"
+        build_scene_clip(
+            visual_path=str(source),
+            duration=0.2,
+            subtitle_text="字幕會長這樣",
+            output_path=str(clip),
+            accent_colour=decoration.resolve_accent(style, accent_colour),
+            border_width=border_width,
+            info_card_text=decoration.identity_line(profile),
+        )
+        frame = preview_dir / "preview.png"
+        subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-i", str(clip), "-frames:v", "1", str(frame)],
+            check=True,
+        )
+        # Read it back before the directory goes: FileResponse would stream
+        # after this function has returned and the cleanup has run.
+        return Response(content=frame.read_bytes(), media_type="image/png")
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=500, detail=f"預覽產生失敗：{e}") from e
+    finally:
+        shutil.rmtree(preview_dir, ignore_errors=True)
 
 
 @app.get("/api/pets/{pet_id}/scene-plan")
@@ -335,6 +399,8 @@ def api_generate(pet_id: str, req: GenerateRequest):
             background_mode=req.background_mode,
             background_prompt=req.background_prompt,
             image_provider=req.image_provider,
+            accent_colour=req.accent_colour,
+            border_width=req.border_width,
             recap_unused_assets=req.recap_unused_assets,
             on_progress=on_progress,
         )
@@ -404,6 +470,8 @@ def api_regenerate_scene(job_id: int, req: RegenerateSceneRequest):
             background_mode=req.background_mode,
             background_prompt=req.background_prompt,
             image_provider=req.image_provider,
+            accent_colour=req.accent_colour,
+            border_width=req.border_width,
             on_progress=on_progress,
         )
         return {"output_path": output_path, "job_id": new_job_id}

@@ -45,6 +45,8 @@ def generate_video(
     background_mode: BackgroundMode = BackgroundMode.EXTEND,
     image_provider: str = "comfy",
     background_prompt: str | None = None,
+    accent_colour: str | None = None,
+    border_width: int | None = None,
     recap_unused_assets: bool = False,
     on_progress: ProgressCallback = noop,
 ) -> tuple[str, int]:
@@ -92,6 +94,8 @@ def generate_video(
         background_mode=background_mode.value,
         image_provider=image_provider,
         background_prompt=background_prompt,
+        decor_accent=accent_colour,
+        decor_border_width=border_width,
     )
     try:
         final_path = _run_generation(
@@ -108,6 +112,8 @@ def generate_video(
             background_mode=background_mode,
             image_provider=image_provider,
             background_prompt=background_prompt,
+            accent_colour=accent_colour,
+            border_width=border_width,
             recap_unused_assets=recap_unused_assets,
             on_progress=on_progress,
         )
@@ -133,6 +139,8 @@ def _run_generation(
     background_mode: BackgroundMode,
     image_provider: str,
     background_prompt: str | None,
+    accent_colour: str | None,
+    border_width: int | None,
     recap_unused_assets: bool,
     on_progress: ProgressCallback,
 ) -> str:
@@ -230,6 +238,8 @@ def _run_generation(
         background_mode=background_mode,
         image_provider=image_provider,
         background_prompt=background_prompt,
+        accent_colour=accent_colour,
+        border_width=border_width,
         on_progress=scaled(on_progress, 0.35, 0.98),
         scene_tracker=DatabaseSceneTracker(job_id),
     )
@@ -292,6 +302,8 @@ def resume_generation_job(
             background_mode=BackgroundMode(job["background_mode"] or BackgroundMode.EXTEND),
             image_provider=job["image_provider"] or "comfy",
             background_prompt=job["background_prompt"],
+            accent_colour=job["decor_accent"],
+            border_width=job["decor_border_width"],
             on_progress=scaled(on_progress, 0.05, 0.98),
             scene_tracker=DatabaseSceneTracker(job_id, resume=True),
         )

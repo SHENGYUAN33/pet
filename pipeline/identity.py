@@ -53,7 +53,9 @@ Answer ONLY with a JSON object, no other text and no code fences:
 shaped, false if any part is missing, duplicated or distorted>,
  "sits_in_the_scene": <true if the animal is really standing, sitting or \
 lying on something in the picture, false if it seems to hang in mid-air or \
-be pasted on top>}
+be pasted on top>,
+ "upright_in_the_scene": <true if the animal is the right way up for this \
+room, false if it looks tipped over, rotated or falling>}
 """
 
 
@@ -194,6 +196,13 @@ def _judge(answer: dict, *, species: str) -> IdentityCheck:
     if isinstance(count, int) and count >= 1:
         if answer.get("body_intact") is False:
             issues.append("寵物的身體看起來不完整或變形了，請確認這顆鏡頭")
+        if answer.get("upright_in_the_scene") is False:
+            # Measured: a cat photographed from above, composited into a room
+            # drawn at eye level, came back described as "playfully falling
+            # over" — and passed, because it was intact and was on the rug.
+            # Nothing read the description, so nothing asked the only
+            # question that mattered.
+            issues.append("寵物的方向跟場景對不起來（看起來像倒著或翻倒），請確認這顆鏡頭")
         if answer.get("sits_in_the_scene") is False:
             issues.append("寵物看起來像浮在半空或貼上去的，請確認這顆鏡頭")
 

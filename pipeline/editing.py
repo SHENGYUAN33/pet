@@ -226,6 +226,7 @@ def build_scene_clip(
     output_path: str,
     disclosure_text: str | None = None,
     accent_colour: str | None = None,
+    border_width: int | None = None,
     info_card_text: str | None = None,
 ) -> str:
     """Render one scene's video (no audio): real video or photo (Ken Burns
@@ -269,7 +270,7 @@ def build_scene_clip(
     if accent_colour:
         video_filter += (
             f"{decoration.vignette_filter()},"
-            f"{decoration.border_filter(accent_colour, FRAME_WIDTH, FRAME_HEIGHT)},"
+            f"{decoration.border_filter(accent_colour, FRAME_WIDTH, FRAME_HEIGHT, border_width)},"
         )
 
     subtitle_file = _write_text_file(
@@ -302,13 +303,18 @@ def build_scene_clip(
 
     if info_card_text:
         info_file = _write_text_file(info_card_text, output_path, suffix=".info.txt")
+        # Both live at the top of the frame; stacked without a gap they read
+        # as one cluttered block rather than two separate things.
+        info_y = config.DECOR_INFO_CARD_Y + (
+            config.DECOR_DISCLOSURE_CLEARANCE if disclosure_text else 0
+        )
         drawtext += (
             f",drawtext=fontfile='{_escape_filter_path(config.DRAWTEXT_FONT_FILE)}':"
             f"textfile='{_escape_filter_path(str(info_file))}':"
             "expansion=none:"
             f"fontcolor=white:fontsize={config.DECOR_INFO_CARD_FONT_SIZE}:"
             "box=1:boxcolor=black@0.55:boxborderw=16:"
-            f"x=(w-text_w)/2:y={config.DECOR_INFO_CARD_Y}:"
+            f"x=(w-text_w)/2:y={info_y}:"
             # Held only while the viewer is deciding whether to keep
             # watching; after that it is in the way of the shot it sits on.
             f"enable='lt(t,{config.DECOR_INFO_CARD_SECONDS})'"
@@ -365,6 +371,7 @@ def build_recap_clip(
     subtitle_text: str,
     output_path: str,
     accent_colour: str | None = None,
+    border_width: int | None = None,
 ) -> str:
     """Render one shot that cuts through several assets in turn.
 
@@ -386,6 +393,7 @@ def build_recap_clip(
                 subtitle_text=subtitle_text,
                 output_path=str(part),
                 accent_colour=accent_colour,
+                border_width=border_width,
             )
         )
     return concat_video_only(parts, output_path)

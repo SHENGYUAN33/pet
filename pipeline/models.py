@@ -125,6 +125,12 @@ class GenerationJob(Base):
     # moment the file exists and stays unreviewed until somebody looks. The
     # note carries the reviewer's reason, which is the whole value of a
     # rejection — the next attempt has to know what was wrong.
+    # The reviewer's own choice of accent and border weight, when they made
+    # one. NULL means the style's default. Kept for the same reason as every
+    # other setting here: a resumed run has to finish the video that was
+    # being made, and half a video in a different colour is a different video.
+    decor_accent: Mapped[str | None] = mapped_column(String, nullable=True)
+    decor_border_width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     review_state: Mapped[str] = mapped_column(String, default=ReviewState.PENDING.value)
     review_note: Mapped[str | None] = mapped_column(String, nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

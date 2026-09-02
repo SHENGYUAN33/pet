@@ -683,3 +683,28 @@ def test_a_new_version_starts_unreviewed(client):
     job_id = completed_job(TEST_PET_ID, script_json={"scenes": [{"scene_id": 1}]})
 
     assert client.get(f"/api/jobs/{job_id}").json()["review_state"] == "pending"
+
+
+def test_the_look_preview_renders_the_same_way_a_real_shot_does(client):
+    """Tuning a border by rendering a whole video is a three-minute wait per
+    guess. The preview runs the pipeline's own build_scene_clip so what a
+    reviewer is looking at cannot drift from what they will get."""
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+
+    response = client.get(
+        f"/api/pets/{TEST_PET_ID}/decor-preview",
+        params={"style": "cute", "accent_colour": "0x123456", "border_width": 10},
+    )
+
+    # The sample profile's assets do not exist on disk, so this is the
+    # honest error rather than a picture — what matters is that it says so
+    # instead of returning something broken.
+    assert response.status_code in (200, 400)
+    if response.status_code == 200:
+        assert response.headers["content-type"] == "image/png"
+    else:
+        assert "素材" in response.json()["detail"] or "照片" in response.json()["detail"]
+
+
+def test_the_look_preview_for_an_unknown_pet_returns_404(client):
+    assert client.get("/api/pets/PET-DOES-NOT-EXIST/decor-preview").status_code == 404

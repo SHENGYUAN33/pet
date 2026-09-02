@@ -59,7 +59,20 @@ def vignette_filter() -> str:
     return f"vignette=angle={config.DECOR_VIGNETTE_ANGLE}"
 
 
-def border_filter(colour: str, width: int, height: int) -> str:
+def resolve_accent(style: str, override: str | None = None) -> str:
+    """The accent colour a video is drawn in.
+
+    An override is a reviewer's own choice and wins over the style's default,
+    the same way a named scene wins over the script's background. Blank is
+    treated as "not chosen" rather than as a colour, because that is what an
+    empty form field means.
+    """
+    if override and override.strip():
+        return override.strip()
+    return palette_for(style)["accent"]
+
+
+def border_filter(colour: str, width: int, height: int, thickness: int | None = None) -> str:
     """An inset frame in the style's accent colour.
 
     Drawn inside the picture rather than added around it, so every shot
@@ -69,7 +82,7 @@ def border_filter(colour: str, width: int, height: int) -> str:
     be positioned anyway.
     """
     inset = config.DECOR_BORDER_INSET
-    thickness = config.DECOR_BORDER_WIDTH
+    thickness = config.DECOR_BORDER_WIDTH if thickness is None else thickness
     box_width = width - inset * 2
     box_height = height - inset * 2
     return (

@@ -65,6 +65,8 @@ def start_generation_job(
     background_mode: str | None = None,
     image_provider: str | None = None,
     background_prompt: str | None = None,
+    decor_accent: str | None = None,
+    decor_border_width: int | None = None,
 ) -> int:
     """Open a RUNNING job row before the work begins and return its id.
 
@@ -87,6 +89,8 @@ def start_generation_job(
             background_mode=background_mode,
             image_provider=image_provider,
             background_prompt=background_prompt,
+            decor_accent=decor_accent,
+            decor_border_width=decor_border_width,
             disclosure_missing={
                 "missing_restrictions": [],
                 "background_risks": [],
@@ -181,6 +185,8 @@ def get_generation_job(job_id: int) -> dict | None:
             "background_mode": row.background_mode,
             "image_provider": row.image_provider,
             "background_prompt": row.background_prompt,
+            "decor_accent": row.decor_accent,
+            "decor_border_width": row.decor_border_width,
             "script_json": row.script_json,
             # The check results, which pipeline/review.py needs to decide
             # whether this version may be approved. They were missing here

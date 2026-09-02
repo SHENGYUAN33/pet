@@ -415,3 +415,8 @@ BACKGROUND_ALLOW_SCRIPT_REPLACE = os.getenv("BACKGROUND_ALLOW_SCRIPT_REPLACE", "
     "false",
     "no",
 }
+
+# How far the pet's details drop when a shot also carries the AI-generation
+# disclosure. Both sit at the top of the frame, and stacked without a gap
+# they read as one cluttered block — measured on a real shot.
+DECOR_DISCLOSURE_CLEARANCE = int(os.getenv("DECOR_DISCLOSURE_CLEARANCE", "70"))

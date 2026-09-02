@@ -751,6 +751,26 @@ textarea.auto { min-height: 76px; resize: vertical; font-family: inherit; }
             </div>
           </details>
 
+          <details class="adv" id="decor-section">
+            <summary>版面外觀（選填）</summary>
+            <div class="adv-body">
+              <p class="hint" style="margin-top:0">每個風格本來就有自己的主色，這裡是你要自己挑的時候用的。右邊的預覽跟實際輸出走同一條渲染流程，改了就會更新。</p>
+              <label class="field">
+                <span class="lbl">主色<span class="sub">邊框顏色；留著預設就是照風格</span></span>
+                <input type="color" name="accent_colour" value="#FF8FA3" />
+              </label>
+              <label class="field">
+                <span class="lbl">邊框粗細<span class="sub"><span id="border-width-value">6</span> px</span></span>
+                <input type="range" name="border_width" min="0" max="24" step="1" value="6" />
+              </label>
+              <div class="field">
+                <span class="lbl">預覽</span>
+                <img id="decor-preview" alt="版面預覽" style="max-width:220px;border-radius:8px;display:block" />
+                <p class="hint" id="decor-preview-note"></p>
+              </div>
+            </div>
+          </details>
+
           <details class="adv">
             <summary>AI 背景（選填，覆寫腳本的決定）</summary>
             <div class="adv-body">
@@ -836,6 +856,21 @@ textarea.auto { min-height: 76px; resize: vertical; font-family: inherit; }
                 <label class="field">
                   <span class="lbl">動作描述 prompt<span class="sub">只有 CogVideoX / Wan2.2 支援；描述「寵物」的動作就好，不要寫運鏡（鏡頭固定是系統自動加的）</span></span>
                   <input type="text" name="animate_prompt" placeholder="貓輕輕搖尾巴、抬頭看鏡頭" />
+                </label>
+              </div>
+            </details>
+
+            <details class="adv">
+              <summary>版面外觀（選填）</summary>
+              <div class="adv-body">
+                <p class="hint" style="margin-top:0">留白＝沿用這個版本原本的外觀。</p>
+                <label class="field">
+                  <span class="lbl">主色</span>
+                  <input type="color" name="accent_colour" value="#FF8FA3" />
+                </label>
+                <label class="field">
+                  <span class="lbl">邊框粗細</span>
+                  <input type="range" name="border_width" min="0" max="24" step="1" value="6" />
                 </label>
               </div>
             </details>
@@ -1625,6 +1660,49 @@ document.querySelectorAll(".tab").forEach((t) => {
   t.addEventListener("click", () => switchTab(t.dataset.tab));
 });
 
+/* ---------- look ---------- */
+// The colour input speaks "#RRGGBB"; FFmpeg's drawbox wants "0xRRGGBB".
+function toFilterColour(value) {
+  return value && value.startsWith("#") ? "0x" + value.slice(1) : value;
+}
+
+function decorFrom(form) {
+  return {
+    accent_colour: toFilterColour(form.get("accent_colour")),
+    border_width: parseInt(form.get("border_width"), 10),
+  };
+}
+
+let previewTimer = null;
+function scheduleDecorPreview() {
+  // Debounced: dragging the width slider would otherwise fire a render per
+  // pixel, and each one shells out to FFmpeg.
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(refreshDecorPreview, 250);
+}
+
+async function refreshDecorPreview() {
+  const img = $("decor-preview");
+  const note = $("decor-preview-note");
+  if (!img) return;
+  if (!currentPetId) {
+    img.removeAttribute("src");
+    note.textContent = "請先選一隻寵物";
+    return;
+  }
+  const form = new FormData($("generate-form"));
+  const params = new URLSearchParams({
+    style: form.get("style") || "cute",
+    accent_colour: toFilterColour(form.get("accent_colour")),
+    border_width: form.get("border_width"),
+  });
+  note.textContent = "更新中…";
+  img.src =
+    "/api/pets/" + encodeURIComponent(currentPetId) + "/decor-preview?" + params.toString();
+  img.onload = () => { note.textContent = "這張跟實際輸出走同一條渲染流程"; };
+  img.onerror = () => { note.textContent = "預覽失敗 — 這隻寵物可能還沒有照片"; };
+}
+
 /* ---------- generate ---------- */
 // "2,4" -> [2, 4]; anything that isn't a number is dropped rather than sent
 // as NaN. Empty means null, which every caller reads as "not specified".
@@ -1635,6 +1713,18 @@ function parseSceneIds(raw) {
     .filter((n) => !isNaN(n));
   return ids.length ? ids : null;
 }
+
+for (const name of ["accent_colour", "border_width", "style"]) {
+  $("generate-form").elements[name].addEventListener("input", () => {
+    if (name === "border_width") {
+      $("border-width-value").textContent = $("generate-form").elements.border_width.value;
+    }
+    scheduleDecorPreview();
+  });
+}
+$("decor-section").addEventListener("toggle", (e) => {
+  if (e.target.open) refreshDecorPreview();
+});
 
 $("generate-form").elements.duration.addEventListener("input", scheduleScenePlan);
 $("generate-form").elements.recap_unused_assets.addEventListener("change", refreshScenePlan);
@@ -1657,6 +1747,7 @@ $("generate-form").addEventListener("submit", async (e) => {
     background_scenes: parseSceneIds(form.get("background_scenes")),
     background_mode: form.get("background_mode") || "extend",
     background_prompt: form.get("background_prompt") || null,
+    ...decorFrom(form),
     recap_unused_assets: form.get("recap_unused_assets") === "on",
   };
   // Both halves are needed, and getting one without the other used to mean
@@ -1780,6 +1871,7 @@ $("regenerate-form").addEventListener("submit", async (e) => {
     generate_background: Boolean(form.get("background_mode")),
     background_mode: form.get("background_mode") || "extend",
     background_prompt: form.get("background_prompt") || null,
+    ...decorFrom(form),
   };
   try {
     const task = await api("/api/jobs/" + jobId + "/regenerate-scene", {
