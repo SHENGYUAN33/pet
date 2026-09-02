@@ -893,6 +893,44 @@ textarea.auto { min-height: 76px; resize: vertical; font-family: inherit; }
               </div>
             </details>
 
+            <details class="adv" id="overlay-block">
+              <summary>版型（選填）</summary>
+              <div class="adv-body">
+                <p class="hint" style="margin-top:0">腳本本來就會決定每顆鏡頭要不要加版面。留白＝沿用它的決定；選了版型就會<strong>整組換掉</strong>這顆鏡頭的版面。</p>
+                <label class="field">
+                  <span class="lbl">版型<span class="sub">選「不加版面」等於把這顆鏡頭原本的版面拿掉</span></span>
+                  <select name="overlay_template" id="overlay-template">
+                    <option value="">沿用腳本的決定</option>
+                    <option value="none">不加版面（拿掉）</option>
+                    <option value="center_quote">置中大字（開場 hook）</option>
+                    <option value="speech_bubble">對話氣泡（寵物說的一句話）</option>
+                    <option value="info_sidebar">右側資訊欄（年齡、疫苗…）</option>
+                    <option value="contact_card">結尾行動卡（預約見面）</option>
+                  </select>
+                </label>
+                <label class="field ov-f" data-for="center_quote" hidden>
+                  <span class="lbl">大字內容<span class="sub">繁體中文，14 字以內；不要用 emoji（版面字型沒有，會變空白方框）</span></span>
+                  <input type="text" name="overlay_headline" placeholder="我在這裡，等你的溫暖" />
+                </label>
+                <label class="field ov-f" data-for="speech_bubble" hidden>
+                  <span class="lbl">氣泡裡的話<span class="sub">繁體中文，14 字以內</span></span>
+                  <input type="text" name="overlay_quote" placeholder="喜歡呼嚕嚕" />
+                </label>
+                <label class="field ov-f" data-for="info_sidebar" hidden>
+                  <span class="lbl">資訊欄內容<span class="sub">一行一項，最多 4 行。<strong>只能寫 Profile 裡真的有的事</strong>——燒在畫面上的跟旁白講的一樣會被事實查核</span></span>
+                  <textarea name="overlay_tags" rows="4" placeholder="年齡：2歲&#10;性別：女生&#10;疫苗：已完成"></textarea>
+                </label>
+                <label class="field ov-f" data-for="contact_card" hidden>
+                  <span class="lbl">行動呼籲</span>
+                  <input type="text" name="overlay_cta_text" placeholder="預約見面" />
+                </label>
+                <label class="field ov-f" data-for="contact_card" hidden>
+                  <span class="lbl">聯絡單位<span class="sub">選填</span></span>
+                  <input type="text" name="overlay_contact_info" placeholder="範例動物之家" />
+                </label>
+              </div>
+            </details>
+
             <button type="submit" class="primary">重新生成這個鏡頭</button>
             <p class="hint" style="margin-top:8px">不會重跑 LLM，只 patch 這個鏡頭後重新渲染，並存成新的一筆版本（舊版保留）。</p>
           </div>
@@ -919,6 +957,14 @@ const STYLE_LABEL = { cute: "萌系", warm_story: "溫暖故事", contrast_humor
 // nothing, so it stays unlabelled — a badge on every row would drown the
 // two that matter.
 const BACKGROUND_LABEL = { extend: "🖼 延伸背景", replace: "🎨 置換背景（AI）" };
+// "none" is deliberately absent: a badge on every row is no badge at all,
+// same rule as the background labels above.
+const OVERLAY_LABEL = {
+  center_quote: "置中大字",
+  speech_bubble: "對話氣泡",
+  info_sidebar: "資訊欄",
+  contact_card: "行動卡",
+};
 // Where a version stands with a human. Pending is the ordinary state and
 // says nothing, so only a decision gets a badge.
 const REVIEW_BADGE = {
@@ -1603,6 +1649,10 @@ async function loadScenes(jobId) {
     // redo can see which ones carry generated content — a replaced setting
     // is the one the video has to disclose.
     meta.push(BACKGROUND_LABEL[(scene.background || {}).mode] || null);
+    // Which panel this shot wears, so a reviewer can see what they are about
+    // to replace without opening the script JSON.
+    const panel = OVERLAY_LABEL[(scene.overlay || {}).template];
+    meta.push(panel ? "▦ " + panel : null);
     div.querySelector(".m").textContent = meta.filter(Boolean).join(" · ");
 
     const identity = scene._identity;
@@ -1636,6 +1686,20 @@ function selectScene(scene, el) {
   visualSelect.options[0].textContent = scene.visual_source
     ? "不更換（目前是 " + scene.visual_source + "）"
     : "不更換";
+  // Prefilled from the shot itself, so switching the wording of an existing
+  // panel does not mean retyping it from the video.
+  const overlay = scene.overlay || {};
+  const template = $("overlay-template");
+  template.value = "";
+  form.querySelector('input[name="overlay_headline"]').value = overlay.headline || "";
+  form.querySelector('input[name="overlay_quote"]').value = overlay.quote || "";
+  form.querySelector('textarea[name="overlay_tags"]').value = (overlay.tags || []).join("\n");
+  form.querySelector('input[name="overlay_cta_text"]').value = overlay.cta_text || "";
+  form.querySelector('input[name="overlay_contact_info"]').value = overlay.contact_info || "";
+  template.options[0].textContent = overlay.template && overlay.template !== "none"
+    ? "沿用腳本的決定（目前是 " + (OVERLAY_LABEL[overlay.template] || overlay.template) + "）"
+    : "沿用腳本的決定（目前沒有版面）";
+  syncOverlayFields();
   $("regen-fields").hidden = false;
 }
 
@@ -1647,6 +1711,49 @@ function openRegenFor(jobId) {
     loadScenes(String(jobId));
   }
 }
+
+/* ---------- overlay controls ----------
+   Only the fields the chosen template renders are shown. Every template's
+   inputs at once would offer a reviewer four boxes of which three are
+   discarded — and copy that is discarded reads afterwards as "the overlay
+   did nothing", which is the same mistake the animate/background guards
+   exist to prevent. */
+const OVERLAY_REQUIRED = {
+  center_quote: ["overlay_headline"],
+  speech_bubble: ["overlay_quote"],
+  info_sidebar: ["overlay_tags"],
+  contact_card: ["overlay_cta_text"],
+};
+
+function syncOverlayFields() {
+  const template = $("overlay-template").value;
+  for (const field of document.querySelectorAll("#overlay-block .ov-f")) {
+    field.hidden = field.dataset.for !== template;
+  }
+}
+
+function overlayFrom(form) {
+  const template = form.get("overlay_template");
+  // Blank is the normal state: the shot keeps whatever panel the script
+  // chose for it. Only a deliberate choice sends anything at all.
+  if (!template) return { overlay: null };
+  const tags = (form.get("overlay_tags") || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return {
+    overlay: {
+      template: template,
+      headline: form.get("overlay_headline") || null,
+      quote: form.get("overlay_quote") || null,
+      tags: tags,
+      cta_text: form.get("overlay_cta_text") || null,
+      contact_info: form.get("overlay_contact_info") || null,
+    },
+  };
+}
+
+$("overlay-template").addEventListener("change", syncOverlayFields);
 
 $("regen-job-select").addEventListener("change", (e) => loadScenes(e.target.value));
 $("cleanup-old-btn").addEventListener("click", cleanupOldJobs);
@@ -1872,7 +1979,15 @@ $("regenerate-form").addEventListener("submit", async (e) => {
     background_mode: form.get("background_mode") || "extend",
     background_prompt: form.get("background_prompt") || null,
     ...decorFrom(form),
+    ...overlayFrom(form),
   };
+  // The server refuses these too — this is only so the reviewer hears it
+  // before waiting for a render rather than after.
+  const needed = OVERLAY_REQUIRED[(body.overlay || {}).template];
+  if (needed && !needed.some((f) => (form.get(f) || "").trim())) {
+    toast("選了版型但沒有填內容 — 空的版面不會出現在畫面上", "err");
+    return;
+  }
   try {
     const task = await api("/api/jobs/" + jobId + "/regenerate-scene", {
       method: "POST",

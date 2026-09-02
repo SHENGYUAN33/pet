@@ -307,7 +307,11 @@ def build_scene_clip(
         # expansion=none: subtitle text is copy, not a template — a literal
         # "%" or "{" in it must not be interpreted by drawtext.
         "expansion=none:"
-        "fontcolor=white:fontsize=54:box=1:boxcolor=black@0.5:boxborderw=12:"
+        f"fontcolor=white:fontsize={config.SUBTITLE_FONT_SIZE}:"
+        # Negative, and by a lot: the gap between wrapped lines is the font's
+        # own line height, not a drawtext default (see config).
+        f"line_spacing={config.SUBTITLE_LINE_SPACING}:"
+        "box=1:boxcolor=black@0.5:boxborderw=12:"
         # Anchored by the bottom of the text block, not its top, so a
         # subtitle that wrapped to two lines grows upward into the picture
         # instead of downward off the frame.

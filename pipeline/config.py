@@ -521,3 +521,27 @@ OVERLAY_MAX_SHARE = float(os.getenv("OVERLAY_MAX_SHARE", "0.6"))
 # block), so the clearance is what a third line eats into instead of the
 # panel.
 OVERLAY_SUBTITLE_CLEARANCE = int(os.getenv("OVERLAY_SUBTITLE_CLEARANCE", "70"))
+
+# Burned-in subtitle type. Size lives here rather than inline in the filter
+# for the same reason every other threshold does — and because the line
+# spacing below is only correct relative to it.
+SUBTITLE_FONT_SIZE = int(os.getenv("SUBTITLE_FONT_SIZE", "54"))
+# Extra pixels between wrapped subtitle lines, on top of the font's own line
+# height. Negative, because the font's own is far too generous.
+#
+# drawtext's default is 0, so this is not a loose default being tightened —
+# it is the face's metrics. Measured on msjh at size 54: consecutive lines
+# land 144px apart while the glyphs are 47px tall, leaving a ~100px blank
+# between them. Two lines of subtitle read as two unrelated captions rather
+# than one sentence that wrapped.
+#
+# The number was swept rather than derived, because the arithmetic is not the
+# obvious one: the block is anchored by the *bottom* of its text (see the
+# subtitle's y= in pipeline/editing.py), so shrinking the line height also
+# slides the block down, and the gap closes at twice the rate the option
+# suggests — measured advance is 144 + 2 x this value, and -60 collided the
+# two lines outright. -32 lands at an 80px advance, about 1.5x the type size
+# and ordinary CJK leading, with 33px of clear space between glyphs.
+#
+# Measured for this face at this size: change either and measure again.
+SUBTITLE_LINE_SPACING = int(os.getenv("SUBTITLE_LINE_SPACING", "-32"))

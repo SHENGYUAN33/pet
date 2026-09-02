@@ -10,6 +10,7 @@ from pipeline.fact_check import (
     find_missing_disclosures,
     find_unsupported_claims,
 )
+from pipeline.overlay_renderer import SceneOverlaySpec
 from pipeline.pet_repo import (
     fail_generation_job,
     finish_generation_job,
@@ -33,10 +34,19 @@ def apply_scene_overrides(
     visual_source: str | None = None,
     subtitle: str | None = None,
     narration: str | None = None,
+    overlay: SceneOverlaySpec | None = None,
 ) -> dict:
     """Return a copy of script with the given scene's fields overridden
     (only fields that are not None are changed). Pure/no I/O, so this is
-    the one part of single-shot regeneration that's easy to unit test."""
+    the one part of single-shot regeneration that's easy to unit test.
+
+    overlay replaces the shot's composed panel wholesale rather than merging
+    field by field, because the fields belong to a template: keeping the old
+    headline when the reviewer switched to a speech bubble would leave copy
+    on the scene that nothing renders and fact-checking still reads. Passing
+    a spec with template "none" is how a panel is taken off — the reason
+    this is one nullable object instead of a set of nullable strings, which
+    could only ever mean "leave it alone"."""
     patched = copy.deepcopy(script)
     for scene in patched["scenes"]:
         if scene["scene_id"] == scene_id:
@@ -46,6 +56,8 @@ def apply_scene_overrides(
                 scene["subtitle"] = subtitle
             if narration is not None:
                 scene["narration"] = narration
+            if overlay is not None:
+                scene["overlay"] = overlay.model_dump(mode="json")
             return patched
     raise ValueError(f"scene_id {scene_id} not found in script")
 
@@ -57,6 +69,7 @@ def regenerate_scene(
     visual_source: str | None = None,
     subtitle: str | None = None,
     narration: str | None = None,
+    overlay: SceneOverlaySpec | None = None,
     voice_sample: str | None = None,
     music_track: str | None = None,
     animate: bool = False,
@@ -99,6 +112,7 @@ def regenerate_scene(
         visual_source=visual_source,
         subtitle=subtitle,
         narration=narration,
+        overlay=overlay,
     )
 
     # Opened before the render so an I2V regeneration that dies partway

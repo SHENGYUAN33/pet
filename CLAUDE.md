@@ -153,7 +153,10 @@
     - **字型是 `config.OVERLAY_FONT_FILE`，預設就是字幕用的那個**（`DRAWTEXT_FONT_FILE`，msjh）：同一個畫面兩種字型看起來像兩支影片疊在一起。也**不新增字型檔**。
     - 實測踩到並修掉的兩件事：**emoji 會變成空白方框**（微軟正黑體沒有 emoji 字符，「預約見面 🐾」變成「預約見面 □」，看起來像影片壞掉而不是少了裝飾）——所以 `strip_unrenderable()` 依 Unicode 區段濾掉，**用區段而不是探測字型覆蓋率**，否則不同機器會產出不同畫面；prompt 也加了「不要用 emoji」，但比照 `SUBTITLE_MAX_UNITS` 那條，**畫面不可以依賴 7B 模型聽話**。以及**結尾行動卡貼著字幕**——安全帶的下緣是為貼圖（小、稀疏）訂的，一塊板子直接坐在上面會跟字幕連成一塊，而字幕是往上長的，所以多了 `config.OVERLAY_SUBTITLE_CLEARANCE`。
     - **沒有 migration、也沒有新的欄位**：版面是腳本的一部分，跟著既有的 `script_json` 走，續跑/單鏡頭重生自動帶著。PNG 畫在該次生成的 `work_dir/scene_<id>_overlay.png`，**不跨次快取**——它只要幾毫秒，而續跑本來就重用整支完成的 clip，快取唯一能做的事是在審核者改完文案後端出一張舊的。
-    - **網頁端還沒接**（沒有讓審核者在 UI 上改版型/文案的欄位），這一步刻意只做到腳本層＋渲染層。
+    - **網頁端已接上（單鏡頭重生）**：`RegenerateSceneRequest` 多了一個 `overlay` 欄位，型別直接是 `SceneOverlaySpec`。**刻意是「一個可為 null 的物件」而不是一堆 `overlay_*` 字串**——欄位是屬於某個版型的（換成氣泡卻留著舊的 headline，會讓那段文案留在 scene 上不被渲染卻仍被事實查核讀到），而且一堆字串只能表達「不要改」，沒辦法表達**「把版面拿掉」**（那是 `template: "none"`，審核者看到一個不好看的版面必須能移除它）。`apply_scene_overrides()` 因此是整組替換而不是逐欄合併。
+    - 表單在「版型（選填）」摺疊區：下拉選版型，**只顯示該版型真的會渲染的欄位**（四個欄位同時給等於三個會被丟掉，而被丟掉的文案事後讀起來就是「這個功能沒作用」，跟 `animate_prompt`／`background_prompt` 同一條規則）。點選鏡頭時會**用該鏡頭現有的版面預填**，鏡頭清單每一列也會標出目前的版型（`none` 不標）。填了文案卻選「不加版面」、或選了版型卻沒填內容，前後端都會擋下並說明原因。
+    - **沒有 migration、也沒有 `regenerate_scene` 以外的新參數**：版面在 `script_json` 裡，續跑/重生本來就帶著走。
+    - 實測（job 3476 → 3628，一支原本完全沒有版面的影片）：加上 `center_quote` 後只有第 1 顆鏡頭多出 `scene_1_overlay.png`，其餘鏡頭畫面不變，邊框/暈影/資訊卡/貼圖/字幕/版面全部在同一次編碼裡合成。
 
   - **給非工程使用者的表單化 UI**：Pet Profile 不再只有 JSON textarea——`webapp/static/index.html` 現在是中文欄位表單（基本資料／健康狀態勾選／個性標籤 chip 編輯器／故事與領養條件／照片影片清單含縮圖／外觀特徵摺疊區），JSON 直編退居「進階」摺疊區（可「套用到上方表單」，但仍要按表單的儲存鈕才寫入 DB）。表單會保留 schema 中沒有對應 widget 的欄位再合併回去，不會靜默丟資料。**檔案路徑欄位改成用選的**：瀏覽器拿不到本機檔案的真實路徑，所以「從電腦選擇」＝開 OS 檔案對話框→上傳到 `storage/assets/<pet_id>/`→用存下來那份的相對路徑；新增 `POST /api/pets/{pet_id}/assets`（副檔名 allowlist、檔名淨化、同名不覆蓋、pet_id 先做字元檢查＋ `storage/assets/` 包含性檢查再查 DB）、`GET /api/pets/{pet_id}/assets`（列出已上傳檔案給下拉選單）、`GET /api/profile-files`（匯入表單改成下拉選單），照片縮圖走唯讀的 `/media` static mount。單鏡頭重生的「換素材」也從手打 asset_id 改成從該寵物素材下拉選。上傳需要先有 pet_id（新寵物要先存檔才能傳照片）。
 
@@ -218,7 +221,7 @@ alembic upgrade head                              # 套用
 - **每個新功能／bug fix 都要有對應測試**（`tests/`，用 `pytest`），不接受無測試覆蓋的 pipeline 邏輯變更
 - **合併前必須通過 `ruff check` 與 `ruff format --check`**（`.claude/hooks/post-edit.sh` 會在每次 Edit/Write 後自動跑 `ruff check --fix` + `ruff format`，但送出前仍需確認乾淨）
 - **型別標註**：`pipeline/` 與 `providers/` 下的公開函式/方法一律加 type hints，資料結構優先用 `pydantic` model（對應 Pet Profile / Script schema），不用裸 `dict`
-- **不寫死 magic number／字串**：QA 加權評分門檻（80分）、5-7 鏡頭數量（`config.MIN_SCENES`／`MAX_SCENES`）、3-6 秒單鏡頭長度（`config.MIN_SCENE_DURATION`／`MAX_SCENE_DURATION`）、字幕字型（`config.DRAWTEXT_FONT_FILE`）、各 I2V provider 的模型檔名/步數/解析度（`config.SVD_*`／`COGVIDEOX_*`／`WAN_*`）、背景生成的模型/取樣/接縫參數（`config.BACKGROUND_*`）等關鍵參數一律集中在 `pipeline/config.py`（可用 `.env` 覆寫），不散落在各處程式碼
+- **不寫死 magic number／字串**：字幕字級與行距（`config.SUBTITLE_FONT_SIZE`／`SUBTITLE_LINE_SPACING`——後者是**負值**，因為 drawtext 的預設是 0、鬆的是字型自己的行高：msjh 在 54px 下行距 144px 而字高只有 47px，兩行字幕看起來像兩句無關的話；而且畫面是**以文字區塊底部對齊**的，所以間距收合的速度是選項值的兩倍，這個數字是量出來的不是算出來的）、QA 加權評分門檻（80分）、5-7 鏡頭數量（`config.MIN_SCENES`／`MAX_SCENES`）、3-6 秒單鏡頭長度（`config.MIN_SCENE_DURATION`／`MAX_SCENE_DURATION`）、字幕字型（`config.DRAWTEXT_FONT_FILE`）、各 I2V provider 的模型檔名/步數/解析度（`config.SVD_*`／`COGVIDEOX_*`／`WAN_*`）、背景生成的模型/取樣/接縫參數（`config.BACKGROUND_*`）等關鍵參數一律集中在 `pipeline/config.py`（可用 `.env` 覆寫），不散落在各處程式碼
 - **Provider Adapter 介面變更需保持向下相容**：輸入輸出 schema 不可隨意破壞既有呼叫端，新增能力優先用新方法/新欄位而非改變既有介面語意
 - **錯誤處理只在系統邊界做**：外部 API 呼叫、檔案 I/O、使用者輸入解析需要 try/except 並記錄可追溯的錯誤上下文；內部函式之間的呼叫信任呼叫端已驗證過的資料，不重複防禦
 

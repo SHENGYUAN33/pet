@@ -596,3 +596,50 @@ def test_a_missing_overlay_file_leaves_the_shot_alone(sample_photo, tmp_path):
         overlay_path=tmp_path / "never_drawn.png",
     )
     assert out.exists()
+
+
+def _subtitle_line_bands(frame_path) -> list[tuple[int, int]]:
+    """Top/bottom of each band of near-white ink in the subtitle's half of
+    the frame — one band per rendered line."""
+    from PIL import Image
+
+    grey = Image.open(frame_path).convert("L")
+    bands: list[list[int]] = []
+    current = None
+    for y in range(grey.height // 2, grey.height):
+        ink = sum(grey.crop((0, y, grey.width, y + 1)).histogram()[231:])
+        if ink > 2:
+            current = [y, y] if current is None else [current[0], y]
+        elif current:
+            bands.append(current)
+            current = None
+    if current:
+        bands.append(current)
+    return [(top, bottom) for top, bottom in bands if bottom - top >= 8]
+
+
+def test_a_wrapped_subtitle_reads_as_one_sentence_not_two_captions(sample_photo, tmp_path):
+    """The font's own line height puts 144px between lines of 47px glyphs —
+    a blank gap twice the height of the text, which reads as two unrelated
+    captions. config.SUBTITLE_LINE_SPACING pulls it back to ordinary leading;
+    this guards both ends, since overshooting collides the lines instead.
+    """
+    out = tmp_path / "scene.mp4"
+    build_scene_clip(
+        visual_path=str(sample_photo),
+        duration=0.2,
+        # Long enough to wrap at config.SUBTITLE_MAX_UNITS.
+        subtitle_text="牠已經等了 143 天，希望下一個是你",
+        output_path=str(out),
+    )
+    frame = tmp_path / "frame.png"
+    _run(["ffmpeg", "-y", "-i", str(out), "-frames:v", "1", str(frame)])
+
+    bands = _subtitle_line_bands(frame)
+    assert len(bands) >= 2, "subtitle did not wrap — the test text is no longer long enough"
+
+    glyph_height = bands[0][1] - bands[0][0]
+    blank_gap = bands[1][0] - bands[0][1]
+    # Not touching, and not adrift: a gap between roughly a third and a whole
+    # line of text. Unset, this measured ~100px against 47px glyphs.
+    assert 0 < blank_gap < glyph_height, f"line gap {blank_gap}px vs {glyph_height}px glyphs"

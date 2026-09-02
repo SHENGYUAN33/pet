@@ -708,3 +708,97 @@ def test_the_look_preview_renders_the_same_way_a_real_shot_does(client):
 
 def test_the_look_preview_for_an_unknown_pet_returns_404(client):
     assert client.get("/api/pets/PET-DOES-NOT-EXIST/decor-preview").status_code == 404
+
+
+def test_regenerate_rejects_panel_copy_with_no_template(client):
+    """Third of the same class as the motion and background guards: copy
+    typed into a panel that is switched off is discarded, and reads
+    afterwards as "the overlay did nothing"."""
+    from tests.conftest import completed_job
+
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+    job_id = completed_job(TEST_PET_ID, script_json={"scenes": [{"scene_id": 1}]})
+
+    response = client.post(
+        f"/api/jobs/{job_id}/regenerate-scene",
+        json={"scene_id": 1, "overlay": {"template": "none", "headline": "我在這裡等你"}},
+    )
+
+    assert response.status_code == 400
+    assert "版型" in response.json()["detail"]
+
+
+def test_regenerate_rejects_a_template_with_nothing_to_show(client):
+    """An empty panel renders as nothing at all, so the reviewer would be
+    told the overlay worked and see no change."""
+    from tests.conftest import completed_job
+
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+    job_id = completed_job(TEST_PET_ID, script_json={"scenes": [{"scene_id": 1}]})
+
+    response = client.post(
+        f"/api/jobs/{job_id}/regenerate-scene",
+        json={"scene_id": 1, "overlay": {"template": "info_sidebar", "tags": []}},
+    )
+
+    assert response.status_code == 400
+    assert "tags" in response.json()["detail"]
+
+
+def test_regenerate_passes_the_overlay_through(client, monkeypatch):
+    """Without this a reviewer can only change a panel by hand-editing the
+    script JSON, which is the thing the web UI exists to avoid."""
+    from tests.conftest import completed_job
+
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+    job_id = completed_job(TEST_PET_ID, script_json={"scenes": [{"scene_id": 1}]})
+
+    seen = {}
+
+    from webapp import main
+
+    def fake_regenerate(job, scene_id, **kwargs):
+        seen.update(kwargs)
+        return "out.mp4", 999
+
+    monkeypatch.setattr(main, "regenerate_scene", fake_regenerate)
+
+    response = client.post(
+        f"/api/jobs/{job_id}/regenerate-scene",
+        json={
+            "scene_id": 1,
+            "overlay": {"template": "speech_bubble", "quote": "喜歡呼嚕嚕"},
+        },
+    )
+    assert response.status_code == 202
+    _drain_tasks()
+
+    assert seen["overlay"].template.value == "speech_bubble"
+    assert seen["overlay"].quote == "喜歡呼嚕嚕"
+
+
+def test_regenerate_without_an_overlay_leaves_the_script_alone(client, monkeypatch):
+    """Blank is the normal state: the shot keeps whatever panel the script
+    chose for it."""
+    from tests.conftest import completed_job
+
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+    job_id = completed_job(TEST_PET_ID, script_json={"scenes": [{"scene_id": 1}]})
+
+    from webapp import main
+
+    seen = {}
+
+    def fake_regenerate(job, scene_id, **kwargs):
+        seen.update(kwargs)
+        return "out.mp4", 999
+
+    monkeypatch.setattr(main, "regenerate_scene", fake_regenerate)
+
+    response = client.post(
+        f"/api/jobs/{job_id}/regenerate-scene", json={"scene_id": 1, "subtitle": "只改字幕"}
+    )
+    assert response.status_code == 202
+    _drain_tasks()
+
+    assert seen["overlay"] is None

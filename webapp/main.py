@@ -36,6 +36,7 @@ from pydantic import BaseModel, ValidationError
 from pipeline import config, decoration
 from pipeline.background import BackgroundMode
 from pipeline.editing import PHOTO_EXTENSIONS, build_scene_clip
+from pipeline.overlay_renderer import REQUIRED_FIELDS, OverlayTemplate, SceneOverlaySpec
 from pipeline.pet_repo import (
     approve_generation_job,
     cleanup_generation_job,
@@ -268,6 +269,12 @@ class RegenerateSceneRequest(BaseModel):
     image_provider: str = "comfy"
     accent_colour: str | None = None
     border_width: int | None = None
+    #: The shot's composed panel, replaced wholesale. None leaves whatever
+    #: the script chose; a spec with template "none" takes the panel off.
+    #: One nullable object rather than a spread of nullable strings because
+    #: the fields belong to a template — and because a set of strings can
+    #: only ever say "leave it alone", never "remove it".
+    overlay: SceneOverlaySpec | None = None
 
 
 @app.get("/api/pets/{pet_id}/decor-preview")
@@ -453,6 +460,21 @@ def api_regenerate_scene(job_id: int, req: RegenerateSceneRequest):
             status_code=400,
             detail="填了背景描述，但沒有啟用背景生成 — 勾選「重新生成背景」，否則這顆鏡頭會照原本的畫面渲染",
         )
+    # Same class of contradiction once more: copy typed into a panel whose
+    # template does not render it is thrown away, and afterwards reads as
+    # "the overlay did nothing" rather than as the mismatch it is.
+    if req.overlay is not None and not req.overlay.has_content():
+        if req.overlay.template is OverlayTemplate.NONE and req.overlay.spoken_text():
+            raise HTTPException(
+                status_code=400,
+                detail="填了版面文字，但版型選了「不加版面」 — 選一個版型，否則這些文字不會出現在畫面上",
+            )
+        if req.overlay.template is not OverlayTemplate.NONE:
+            needed = "／".join(REQUIRED_FIELDS[req.overlay.template])
+            raise HTTPException(
+                status_code=400,
+                detail=f"選了版型「{req.overlay.template.value}」，但沒有填它要顯示的內容（{needed}） — 空的版面不會出現在畫面上",
+            )
 
     def work(on_progress: ProgressCallback) -> dict:
         output_path, new_job_id = regenerate_scene(
@@ -461,6 +483,7 @@ def api_regenerate_scene(job_id: int, req: RegenerateSceneRequest):
             visual_source=req.visual_source,
             subtitle=req.subtitle,
             narration=req.narration,
+            overlay=req.overlay,
             voice_sample=req.voice_sample,
             music_track=req.music_track,
             animate=req.animate,
