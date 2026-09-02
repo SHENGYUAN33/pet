@@ -222,3 +222,65 @@ def test_no_chosen_width_falls_back_to_the_configured_one():
     chain = decoration.border_filter("0xFF8FA3", FRAME_WIDTH, FRAME_HEIGHT)
 
     assert f":t={config.DECOR_BORDER_WIDTH}" in chain
+
+
+def test_marks_stay_clear_of_the_text_bands():
+    """The top of the frame is the pet's details and the AI disclosure; the
+    bottom is the subtitle. A mark landing on either covers something a
+    viewer has to read."""
+    from pipeline.stickers import placement_slots
+
+    size = config.DECOR_STICKER_SIZE
+    for _, y in placement_slots(FRAME_WIDTH, FRAME_HEIGHT, size):
+        assert y >= config.DECOR_STICKER_SAFE_TOP
+        assert y + size <= FRAME_HEIGHT - config.DECOR_STICKER_SAFE_BOTTOM
+
+
+def test_marks_move_between_shots():
+    """The same mark stuck in the same corner six times reads as a watermark
+    rather than as decoration."""
+    from pipeline.stickers import stickers_for_scene
+
+    first = stickers_for_scene("cute", "0xFF8FA3", 0, FRAME_WIDTH, FRAME_HEIGHT)
+    second = stickers_for_scene("cute", "0xFF8FA3", 1, FRAME_WIDTH, FRAME_HEIGHT)
+
+    assert [(x, y) for _, x, y in first] != [(x, y) for _, x, y in second]
+
+
+def test_a_quiet_style_carries_fewer_marks():
+    """A video about an animal that has had a hard time should not be
+    covered in sparkles."""
+    from pipeline.stickers import stickers_for_scene
+
+    cute = stickers_for_scene("cute", "0xFF8FA3", 0, FRAME_WIDTH, FRAME_HEIGHT)
+    warm = stickers_for_scene("warm_story", "0xE0A458", 0, FRAME_WIDTH, FRAME_HEIGHT)
+
+    assert len(warm) < len(cute)
+
+
+def test_marks_are_tinted_to_the_video_they_belong_to():
+    """Drawn per accent so they belong to the video rather than sitting on
+    top of it — and cached, so the same video always gets the same marks."""
+    from pipeline.stickers import sticker_path
+
+    pink = sticker_path("heart", "0xFF8FA3")
+    teal = sticker_path("heart", "0x4FB3A9")
+
+    assert pink != teal
+    assert pink.exists() and teal.exists()
+    assert sticker_path("heart", "0xFF8FA3") == pink
+
+
+def test_an_unknown_shape_says_what_there_is():
+    from pipeline.stickers import sticker_path
+
+    with pytest.raises(ValueError, match="heart"):
+        sticker_path("unicorn", "0xFF8FA3")
+
+
+def test_stickers_can_be_switched_off(monkeypatch):
+    from pipeline.stickers import stickers_for_scene
+
+    monkeypatch.setattr(config, "DECOR_STICKERS_ENABLED", False)
+
+    assert stickers_for_scene("cute", "0xFF8FA3", 0, FRAME_WIDTH, FRAME_HEIGHT) == []

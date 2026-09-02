@@ -420,3 +420,36 @@ BACKGROUND_ALLOW_SCRIPT_REPLACE = os.getenv("BACKGROUND_ALLOW_SCRIPT_REPLACE", "
 # disclosure. Both sit at the top of the frame, and stacked without a gap
 # they read as one cluttered block — measured on a real shot.
 DECOR_DISCLOSURE_CLEARANCE = int(os.getenv("DECOR_DISCLOSURE_CLEARANCE", "70"))
+
+# --- 貼圖 / Stickers (docs/architecture.md §4 字幕/貼圖/特效) -----------------
+# Small drawn marks over the picture. The cute half of the editing stage's
+# overlay work, and the safe half: a flat mark in a corner does not compete
+# with a photograph, whereas an illustrated *background* under a photographic
+# animal reads as a cut-out pasted on a drawing.
+#
+# Drawn by pipeline/stickers.py rather than shipped as artwork — nothing
+# binary in version control, tinted to the video's own accent, and the same
+# video always gets the same marks. Cached here.
+DECOR_STICKERS_ENABLED = os.getenv("DECOR_STICKERS_ENABLED", "1").lower() not in {
+    "0",
+    "false",
+    "no",
+}
+DECOR_DIR = STORAGE_DIR / "decor"
+DECOR_STICKER_SIZE = int(os.getenv("DECOR_STICKER_SIZE", "110"))
+DECOR_STICKER_OPACITY = float(os.getenv("DECOR_STICKER_OPACITY", "0.85"))
+DECOR_STICKER_MARGIN = int(os.getenv("DECOR_STICKER_MARGIN", "56"))
+# The band a mark may sit in. Above it are the pet's details and the
+# AI-generation disclosure; below it is the subtitle. Anything outside this
+# lands on something a viewer has to read.
+DECOR_STICKER_SAFE_TOP = int(os.getenv("DECOR_STICKER_SAFE_TOP", "380"))
+DECOR_STICKER_SAFE_BOTTOM = int(os.getenv("DECOR_STICKER_SAFE_BOTTOM", "420"))
+# How many marks each narrative style carries, and which. 溫暖故事 gets one
+# quiet paw print: a video about an animal that has had a hard time should
+# not be covered in sparkles.
+DECOR_STICKER_SETS = {
+    "cute": ["heart", "sparkle"],
+    "warm_story": ["paw"],
+    "contrast_humor": ["sparkle", "sparkle"],
+    "": [],
+}

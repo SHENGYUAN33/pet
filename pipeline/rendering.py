@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pipeline import config, decoration
+from pipeline import config, decoration, stickers
 from pipeline.audio_mix import mix_narration_with_music
 from pipeline.background import (
     BackgroundMode,
@@ -12,6 +12,8 @@ from pipeline.background import (
     resolve_scene_background,
 )
 from pipeline.editing import (
+    FRAME_HEIGHT,
+    FRAME_WIDTH,
     PHOTO_EXTENSIONS,
     build_recap_clip,
     build_scene_clip,
@@ -391,6 +393,15 @@ def render_script(
                     accent_colour=resolved_accent,
                     border_width=border_width,
                     info_card_text=info_card_text if scene_id == first_scene_id else None,
+                    stickers=stickers.stickers_for_scene(
+                        script.get("style", ""),
+                        resolved_accent,
+                        index,
+                        FRAME_WIDTH,
+                        FRAME_HEIGHT,
+                    )
+                    if resolved_accent
+                    else None,
                 )
         except Exception as e:
             # Boundary: FFmpeg and the I2V providers are external. Record

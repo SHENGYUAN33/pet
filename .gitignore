@@ -31,6 +31,11 @@ storage/assets/*
 !storage/assets/.gitkeep
 storage/output/*
 !storage/output/.gitkeep
+# Sticker shapes, drawn on demand by pipeline/stickers.py and cached here.
+# Generated art, tinted per video — regenerating costs milliseconds, and the
+# point of drawing them was to keep binaries out of version control.
+storage/decor/*
+!storage/decor/.gitkeep
 tmp/
 
 # Claude Code local overrides

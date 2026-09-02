@@ -228,6 +228,7 @@ def build_scene_clip(
     accent_colour: str | None = None,
     border_width: int | None = None,
     info_card_text: str | None = None,
+    stickers: list[tuple[Path, int, int]] | None = None,
 ) -> str:
     """Render one scene's video (no audio): real video or photo (Ken Burns
     zoom) with burned subtitle. Real-footage-first per
@@ -248,7 +249,13 @@ def build_scene_clip(
     pet's name and age, held for the first few seconds only — it competes
     with the hook, and after the hook has landed the viewer already knows.
     Both are composited into the same filter chain as the subtitle rather
-    than in a second pass, so dressing a shot costs no extra encode."""
+    than in a second pass, so dressing a shot costs no extra encode.
+
+    stickers are (image, x, y) marks laid over the finished frame
+    (pipeline/stickers.py). They go on last, after the text, because a mark
+    covering a subtitle is worse than a subtitle covering a mark — and they
+    are pulled in with FFmpeg's `movie` source rather than as extra inputs,
+    which keeps this a single -vf chain."""
     is_photo = Path(visual_path).suffix.lower() in PHOTO_EXTENSIONS
 
     if is_photo:
@@ -320,6 +327,16 @@ def build_scene_clip(
             f"enable='lt(t,{config.DECOR_INFO_CARD_SECONDS})'"
         )
 
+    video_filter += drawtext
+    for index, (sticker_path, x, y) in enumerate(stickers or []):
+        # Each mark is its own little graph: label what we have so far, read
+        # the file, lay it on top. The label dance is what lets this stay in
+        # -vf instead of becoming a filter_complex with extra inputs.
+        video_filter += (
+            f"[dec{index}];movie='{_escape_filter_path(str(sticker_path))}'[st{index}];"
+            f"[dec{index}][st{index}]overlay={x}:{y}"
+        )
+
     cmd = [
         "ffmpeg",
         "-y",
@@ -327,7 +344,7 @@ def build_scene_clip(
         "-t",
         str(duration),
         "-vf",
-        f"{video_filter}{drawtext}",
+        video_filter,
         "-an",
         "-r",
         str(FRAME_RATE),
