@@ -122,6 +122,15 @@ def resolve_scene_background(
 
     if mode is BackgroundMode.KEEP:
         return None
+
+    if mode is BackgroundMode.REPLACE and not config.BACKGROUND_ALLOW_SCRIPT_REPLACE:
+        # Downgraded rather than refused: the shot the script wanted is still
+        # made, with its real background kept and its margins filled. See
+        # config.BACKGROUND_ALLOW_SCRIPT_REPLACE for why a model that cannot
+        # see the photograph is not allowed to decide this. pipeline/qa.py
+        # reports the downgrade so it is visible rather than silent.
+        mode = BackgroundMode.EXTEND
+
     return SceneBackground(mode=mode, prompt=_combine(block.get("prompt"), art_direction))
 
 

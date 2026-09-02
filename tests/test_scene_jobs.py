@@ -80,9 +80,7 @@ def stub_render(monkeypatch, tmp_path):
     scenes were actually rendered."""
     rendered: list[int] = []
 
-    def fake_build_scene_clip(
-        *, visual_path, duration, subtitle_text, output_path, disclosure_text=None
-    ):
+    def fake_build_scene_clip(*, visual_path, duration, subtitle_text, output_path, **decor):
         rendered.append(int(Path(output_path).stem.split("_")[1]))
         Path(output_path).write_bytes(b"clip")
         return output_path
@@ -140,9 +138,7 @@ def test_a_scene_that_fails_is_recorded_before_the_error_propagates(
 ):
     job_id = pet_repo.start_generation_job(TEST_PET_ID, style="cute", duration=15)
 
-    def explode_on_scene_2(
-        *, visual_path, duration, subtitle_text, output_path, disclosure_text=None
-    ):
+    def explode_on_scene_2(*, visual_path, duration, subtitle_text, output_path, **decor):
         scene_id = int(Path(output_path).stem.split("_")[1])
         if scene_id == 2:
             raise RuntimeError("ffmpeg exited with 1")
@@ -181,9 +177,7 @@ def test_resume_reuses_finished_clips_and_only_renders_what_is_left(
         structure_issues=[],
     )
 
-    def explode_on_scene_3(
-        *, visual_path, duration, subtitle_text, output_path, disclosure_text=None
-    ):
+    def explode_on_scene_3(*, visual_path, duration, subtitle_text, output_path, **decor):
         scene_id = int(Path(output_path).stem.split("_")[1])
         if scene_id == 3:
             raise RuntimeError("ComfyUI server not reachable")
@@ -203,7 +197,7 @@ def test_resume_reuses_finished_clips_and_only_renders_what_is_left(
 
     # Second attempt, with whatever broke scene 3 now fixed: scenes 1 and 2
     # are on disk and marked done.
-    def working_build(*, visual_path, duration, subtitle_text, output_path, disclosure_text=None):
+    def working_build(*, visual_path, duration, subtitle_text, output_path, **decor):
         stub_render.append(int(Path(output_path).stem.split("_")[1]))
         Path(output_path).write_bytes(b"clip")
         return output_path
@@ -262,9 +256,7 @@ def test_resume_reuses_the_original_animation_settings(stub_render, tmp_path, mo
     )
 
     # Scene 3 is the animated one and the one that died.
-    def explode_on_scene_3(
-        *, visual_path, duration, subtitle_text, output_path, disclosure_text=None
-    ):
+    def explode_on_scene_3(*, visual_path, duration, subtitle_text, output_path, **decor):
         scene_id = int(Path(output_path).stem.split("_")[1])
         if scene_id == 3:
             raise RuntimeError("ComfyUI server not reachable")
@@ -291,7 +283,7 @@ def test_resume_reuses_the_original_animation_settings(stub_render, tmp_path, mo
 
     monkeypatch.setattr(rendering, "animate_photo", record_animation)
 
-    def working_build(*, visual_path, duration, subtitle_text, output_path, disclosure_text=None):
+    def working_build(*, visual_path, duration, subtitle_text, output_path, **decor):
         Path(output_path).write_bytes(b"clip")
         return output_path
 

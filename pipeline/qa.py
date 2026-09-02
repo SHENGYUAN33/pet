@@ -97,6 +97,11 @@ def _background_issues(scene: dict, scene_id) -> list[str]:
 
     issues = []
     mode = block.get("mode")
+    if mode == BackgroundMode.REPLACE.value and not config.BACKGROUND_ALLOW_SCRIPT_REPLACE:
+        issues.append(
+            f"scene {scene_id} asked to replace its setting, which only a reviewer who has "
+            "seen the photo may choose — it was extended instead"
+        )
     if mode not in {m.value for m in BackgroundMode}:
         issues.append(
             f"scene {scene_id} asks for unknown background mode {mode!r} "

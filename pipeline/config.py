@@ -352,3 +352,66 @@ FACT_CHECK_SEMANTIC_ENABLED = os.getenv("FACT_CHECK_SEMANTIC_ENABLED", "1").lowe
     "false",
     "no",
 }
+
+# --- 版面裝飾 / Overlay layout (docs/architecture.md §4 字幕/貼圖/特效) --------
+# Border, vignette and the pet's details, composited by FFmpeg. No model is
+# involved, which after background replacement is the point: the same input
+# gives the same output, the animal cannot be altered, and none of it needs
+# an AI-generation disclosure.
+#
+# Which look a video gets is keyed to the script's `style`; what each style
+# looks like is a design system and belongs here rather than in something a
+# 7B model invents per run.
+DECOR_ENABLED = os.getenv("DECOR_ENABLED", "1").lower() not in {"0", "false", "no"}
+DECOR_DEFAULT_STYLE = "cute"
+DECOR_PALETTES = {
+    # 萌系: warm coral, the friendliest of the three.
+    "cute": {"accent": "0xFF8FA3"},
+    # 溫暖故事: muted amber, quieter than cute and warmer than neutral.
+    "warm_story": {"accent": "0xE0A458"},
+    # 反差幽默: fresh teal, the one that reads as playful rather than sweet.
+    "contrast_humor": {"accent": "0x4FB3A9"},
+}
+# Inset frame. Drawn inside the picture so every clip stays exactly the
+# delivery size and concatenation can keep stream-copying.
+DECOR_BORDER_INSET = int(os.getenv("DECOR_BORDER_INSET", "18"))
+DECOR_BORDER_WIDTH = int(os.getenv("DECOR_BORDER_WIDTH", "6"))
+DECOR_BORDER_OPACITY = float(os.getenv("DECOR_BORDER_OPACITY", "0.9"))
+# Corner darkening. PI/5 is a gentle amount — enough to shape the frame,
+# little enough that nobody notices it as an effect.
+DECOR_VIGNETTE_ANGLE = os.getenv("DECOR_VIGNETTE_ANGLE", "PI/5")
+# The pet's name/age/sex/breed, on screen while the viewer is still deciding
+# whether to keep watching. Short, because it competes with the hook itself.
+DECOR_INFO_CARD_SECONDS = float(os.getenv("DECOR_INFO_CARD_SECONDS", "3.0"))
+DECOR_INFO_CARD_FONT_SIZE = int(os.getenv("DECOR_INFO_CARD_FONT_SIZE", "46"))
+DECOR_INFO_CARD_Y = int(os.getenv("DECOR_INFO_CARD_Y", "150"))
+# Profile stores sex in English; the card is read by adopters in Chinese.
+DECOR_SEX_LABELS = {"male": "男生", "female": "女生"}
+
+# Longest subtitle line, measured in half-width units: a CJK character counts
+# as two, a latin letter as one. drawtext has no wrapping of its own, so a
+# subtitle longer than the frame is simply cut off at both edges — which is
+# what happened the moment the script model wrote an English subtitle and
+# sailed past the character rule it had been given for narration. The rule
+# stays in the prompt, but the picture must not depend on a model obeying it.
+SUBTITLE_MAX_UNITS = int(os.getenv("SUBTITLE_MAX_UNITS", "30"))
+
+# Whether the script may choose to replace a setting on its own.
+#
+# Off, and this is the important line: replacing a background works only as
+# well as the pet segments out of that particular photo, and the script model
+# never sees the photo. It reads filenames and a Profile. Asked to decide
+# where a shot happens, it cannot possibly know that this one is a cat
+# stretched flat against pale bedding that the segmenter will only half find
+# — which is exactly the run that produced a generated cat with a fragment of
+# the real one stuck to its face.
+#
+# So the script decides between keeping the photograph and filling in its
+# margins, both of which leave every camera pixel alone and cannot fail that
+# way. Replacing a setting stays available to a person who has looked at the
+# photo, per shot, from the review UI.
+BACKGROUND_ALLOW_SCRIPT_REPLACE = os.getenv("BACKGROUND_ALLOW_SCRIPT_REPLACE", "0").lower() not in {
+    "0",
+    "false",
+    "no",
+}

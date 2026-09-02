@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pipeline import config
+from pipeline import config, decoration
 from pipeline.audio_mix import mix_narration_with_music
 from pipeline.background import (
     BackgroundMode,
@@ -255,6 +255,17 @@ def render_script(
             return config.BACKGROUND_DISCLOSURE_TEXT
         return None
 
+    # The look this video is dressed in, decided once from the script's own
+    # style. None when decoration is switched off, which build_scene_clip
+    # reads as "leave the picture alone".
+    accent_colour = (
+        decoration.palette_for(script.get("style", ""))["accent"] if config.DECOR_ENABLED else None
+    )
+    # The pet's details belong on the opening shot and nowhere else: by the
+    # second shot the viewer either knows or has scrolled past.
+    first_scene_id = script["scenes"][0]["scene_id"] if script["scenes"] else None
+    info_card_text = decoration.identity_line(profile) if config.DECOR_ENABLED else None
+
     video_clip_paths = []
     ordered_audio_paths = []
     scene_count = len(script["scenes"])
@@ -305,6 +316,7 @@ def render_script(
                     duration=duration,
                     subtitle_text=scene["subtitle"],
                     output_path=str(clip_path),
+                    accent_colour=accent_colour,
                 )
             else:
                 visual_path = visual_paths[0]
@@ -363,6 +375,8 @@ def render_script(
                     subtitle_text=scene["subtitle"],
                     output_path=str(clip_path),
                     disclosure_text=disclosure_for(background),
+                    accent_colour=accent_colour,
+                    info_card_text=info_card_text if scene_id == first_scene_id else None,
                 )
         except Exception as e:
             # Boundary: FFmpeg and the I2V providers are external. Record

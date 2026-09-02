@@ -417,16 +417,18 @@ def test_each_scene_gets_the_treatment_its_script_asked_for(photo_profile, tmp_p
     work_dir = tmp_path / "work"
     render_script(photo_profile, script, work_dir)
 
-    assert [call["mode"] for call in provider.calls] == ["extend", "replace"]
+    # scene 3's script asked to replace; only a reviewer may choose that, so
+    # it is extended instead (pipeline/background.py).
+    assert [call["mode"] for call in provider.calls] == ["extend", "extend"]
     assert not (work_dir / "scene_1_bg.png").exists(), "keep shows the photograph"
 
     # The film-wide look rides along with each shot's own description.
     assert provider.calls[0]["prompt"] == "a cat indoors, warm afternoon light"
     assert provider.calls[1]["prompt"] == "a sunny park, warm afternoon light"
 
-    # Only the invented setting is labelled.
+    # Nothing was invented, so nothing is labelled.
     assert not (work_dir / "scene_2.disclosure.txt").exists()
-    assert (work_dir / "scene_3.disclosure.txt").exists()
+    assert not (work_dir / "scene_3.disclosure.txt").exists()
 
 
 def test_a_named_scene_overrides_what_the_script_chose(photo_profile, tmp_path, monkeypatch):

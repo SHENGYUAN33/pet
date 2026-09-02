@@ -31,7 +31,7 @@ _PROMPT_TEMPLATE = """\
   "story_arc": "<一句話說明這支片的場景怎麼走，例如：從收容所的籠子，到公園草地，最後是有陽光的家>",
   "art_direction": "<英文，全片共用的視覺風格，例如：warm afternoon light, shallow depth of field, soft blurred background, realistic photograph>",
   "scenes": [
-    {{"scene_id": 1, "start": 0, "end": 3, "purpose": "hook", "visual_source": "<必須是下方素材清單中的檔名>", "narration": "...", "subtitle": "...", "background": {{"mode": "keep|extend|replace", "prompt": "<英文；mode 是 keep 時填 null>"}}}}
+    {{"scene_id": 1, "start": 0, "end": 3, "purpose": "hook", "visual_source": "<必須是下方素材清單中的檔名>", "narration": "...", "subtitle": "...", "background": {{"mode": "keep|extend", "prompt": "<英文；mode 是 keep 時填 null>"}}}}
   ],
   "cta": "...",
   "cta_url": "{contact_url}"
@@ -44,7 +44,7 @@ _PROMPT_TEMPLATE = """\
 4. visual_source 必須從下方「可用素材清單」中選擇實際檔名，不可捏造不存在的素材
 5. 不可捏造下方資料以外的健康狀況、技能或救援故事
 6. 必要照護限制（見下方「必要揭露」）必須至少出現在一個 scene 的 narration 或 subtitle 中
-7. 每句 narration 不超過 22 個中文字
+7. 每句 narration 不超過 22 個中文字；**每句 subtitle 不超過 18 個中文字**（字幕會燒進畫面，太長會佔掉整個畫面）
 8. **每個鏡頭的 subtitle 都不可以是空字串**，靜音觀看也要能看懂內容
 9. 開場（第一個 scene）必須是 hook，出現寵物動作與吸睛句
 
@@ -52,18 +52,14 @@ _PROMPT_TEMPLATE = """\
 10. mode 只能是這三個值之一：
     - "keep"：原封不動用照片/影片本來的畫面。**影片素材一律用 keep**（背景處理只對照片有效）
     - "extend"：保留照片真實的背景，只把直式畫面剩下的空白邊補起來
-    - "replace"：把寵物切出來，換到一個新的場景裡（這隻寵物實際上沒去過那裡）
-11. **prompt 一律用英文**，中文會失效
+11. **只有 background.prompt 和 art_direction 這兩個欄位用英文**（圖像模型只認英文）。
+    **narration、subtitle、title、story_arc 一律是繁體中文**，不可以翻成英文——那是要給台灣的領養人看的
 12. mode 是 "extend" 時，prompt 要描述「整張畫面」（含這隻寵物），因為補出來的邊要接得上照片
-13. mode 是 "replace" 時，prompt **只描述場景，絕對不可以提到任何動物**（寫到 cat/dog 會讓畫面多生一隻不存在的動物）
-13a. **想像出來的場景一律是「領養人家裡」那種室內居家環境**：客廳、臥室、窗邊、沙發、地毯、書架旁。
-    領養影片賣的是「牠住進你家會是什麼樣子」，公園、草地、戶外那類場景對一隻要被領養回家的寵物沒有說服力，不要用
-13b. **優先選擇散景/淺景深的室內場景**（例如 a blurred cosy living room with warm lamp light, bokeh），
-    有清楚地板或地面的場景會讓寵物看起來浮在半空
-14. **replace 的場景不可以暗示任何關於這隻寵物的事實**：不可出現人、其他動物、獸醫院/診所/醫療場景、或任何特定的家庭情境
-    （生成一個「有小孩的客廳」等於在宣稱這隻寵物親近小孩，那是捏造）
-15. 各鏡頭的 background 要照 story_arc 的順序**往前推進**：story_arc 提到幾個地點，就照順序分配給不同的鏡頭。**不同鏡頭的 prompt 不可以是同一句話**——同一句重複六次就不是一段旅程，只是同一個場景印六次
-16. 至少要有一個鏡頭是 "keep" 或 "extend"，領養影片不能整支都是生成的場景
+13. **背景描述不可以提到任何動物**（寫到 cat/dog 會讓畫面多生一隻不存在的動物），
+    也不可以出現人、獸醫院/診所、或任何特定家庭情境（例如「有小孩的客廳」等於在宣稱這隻寵物親近小孩，那是捏造）
+14. extend 補出來的邊要接得上照片，所以描述的是**照片本來就有的環境**：
+    在家裡拍的就寫室內（客廳、臥室、窗邊、地毯），不要憑空寫成公園或戶外
+15. 各鏡頭的 background 要照 story_arc 的順序**往前推進**，**不同鏡頭的 prompt 不可以是同一句話**——同一句重複六次就不是一段旅程，只是同一個場景印六次
 
 可用素材清單：
 {asset_list}

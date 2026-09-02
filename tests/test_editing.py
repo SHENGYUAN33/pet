@@ -460,3 +460,42 @@ def test_a_still_is_decoded_once_rather_than_per_frame(tmp_path):
     assert "-loop" not in cmd
     assert PHOTO_LOOP_FILTER in " ".join(cmd)
     assert out.exists()
+
+
+def test_a_long_subtitle_is_wrapped_rather_than_cut_off():
+    """drawtext will not wrap: anything wider than the frame is cut off at
+    both edges, silently. Measured on a real run — the script model wrote an
+    English subtitle, sailed past the character rule it had been given for
+    narration, and both ends of the sentence were missing from the video."""
+    from pipeline.editing import _display_width, wrap_burned_text
+
+    lines = wrap_burned_text("I love playing with wand toys! Meow meow meow~", 30).split("\n")
+
+    assert len(lines) == 2
+    assert all(_display_width(line) <= 30 for line in lines)
+
+
+def test_wrapping_breaks_chinese_between_characters():
+    """Chinese has no spaces to break at, and is set that way anyway."""
+    from pipeline.editing import _display_width, wrap_burned_text
+
+    lines = wrap_burned_text("我已經完成健康檢查，也會乖乖使用尿墊，快來領養我吧", 30).split("\n")
+
+    assert len(lines) == 2
+    assert all(_display_width(line) <= 30 for line in lines)
+    assert "".join(lines) == "我已經完成健康檢查，也會乖乖使用尿墊，快來領養我吧"
+
+
+def test_a_short_subtitle_is_left_on_one_line():
+    from pipeline.editing import wrap_burned_text
+
+    assert "\n" not in wrap_burned_text("最喜歡玩逗貓棒，喵喵喵～", 30)
+
+
+def test_a_cjk_character_counts_as_two_latin_ones():
+    """Counting characters would wrap Chinese far too late and English far
+    too early, since a CJK glyph is about twice as wide at the same size."""
+    from pipeline.editing import _display_width
+
+    assert _display_width("貓") == 2
+    assert _display_width("ab") == 2

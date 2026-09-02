@@ -23,11 +23,39 @@ def _scene(scene_id: int, mode: str | None = None, prompt: str | None = None) ->
 
 
 def test_a_scene_takes_the_treatment_its_script_asked_for():
-    background = resolve_scene_background(_scene(1, "replace", "green grass in a park"))
+    background = resolve_scene_background(_scene(1, "extend", "a cat in a cosy living room"))
 
     assert background is not None
+    assert background.mode is BackgroundMode.EXTEND
+    assert background.prompt == "a cat in a cosy living room"
+
+
+def test_the_script_may_not_replace_a_setting_on_its_own():
+    """Replacing works only as well as the pet segments out of that
+    particular photo, and the script model never sees the photo — it reads
+    filenames and a Profile. The shot is still made, with its real
+    background kept and its margins filled."""
+    background = resolve_scene_background(_scene(1, "replace", "a cosy living room"))
+
+    assert background.mode is BackgroundMode.EXTEND
+
+
+def test_the_downgrade_is_reported_rather_than_silent():
+    issues = validate_script_structure({"scenes": [_scene(1, "replace", "a cosy living room")]})
+
+    assert any("only a reviewer" in issue for issue in issues)
+
+
+def test_a_reviewer_may_still_replace_a_setting():
+    """They have looked at the photograph, which is the whole difference."""
+    background = resolve_scene_background(
+        _scene(1, "keep"),
+        override_scenes={1},
+        override_mode=BackgroundMode.REPLACE,
+        override_prompt="a cosy living room",
+    )
+
     assert background.mode is BackgroundMode.REPLACE
-    assert background.prompt == "green grass in a park"
 
 
 def test_the_film_wide_look_reaches_every_generated_shot():

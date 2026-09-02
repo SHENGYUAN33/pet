@@ -61,7 +61,7 @@
 
 素材組成建議比例（避免一開始做「完全生成式影片」）：60% 真實影片剪輯 / 20% 照片動態化 / 10% 字幕與貼圖 / 10% AI 生成場景。
 
-目前所在階段：**MVP 開發中（第五個切片：背景進入腳本層，一支影片的場景會照故事線推進）**。
+目前所在階段：**MVP 開發中（第九個切片：版面裝飾層，並把背景置換降級成人工專用）**。
 
 - 第一個切片（多寵物管理／PostgreSQL 資料層）：`pipeline/db.py`／`pipeline/models.py`／`pipeline/pet_repo.py`，管理 CLI `pipeline/manage.py`（`init-db`／`import-profile`／`list-pets`／`show-pet`）
 - 第二個切片（分鏡編輯／單鏡頭重生）：渲染邏輯抽到 `pipeline/rendering.py`（`render_script`，`generate_video` 與 `regenerate_scene` 共用，不重複寫一次），每次生成都在 `storage/output/<pet_id>/gen_<8碼token>/` 有自己的子資料夾（不再共用同一層、不會互相覆蓋鏡頭檔案）。`pipeline/regen.py` 提供 `apply_scene_overrides`（純函式）＋ `regenerate_scene`（patch 單一鏡頭素材/字幕/旁白後只重新渲染，不重跑 LLM），CLI 是 `pipeline/regenerate.py`。`GenerationJob` 現在存完整 `script_json`，`parent_job_id` 把重新生成的版本連回原始 job——**每次重生都是新的一筆紀錄，不覆蓋舊的**，原始輸出檔案與紀錄都保留供追溯。
@@ -122,6 +122,13 @@
     - 網頁版本卡片：`pending` 不標（那是常態），核准/退回才有徽章；退回的卡片會顯示原因；只有 `pending` 且已完成、未清理的版本才會出現「核准／退回」按鈕。
     - 寫這一片時抓到一個真的 bug：`get_generation_job()` 當初就沒有回傳 `disclosure_missing`／`structure_issues`（清單有、單筆讀取沒有），所以關卡讀不到任何發現、什麼都擋不住。已補上。
     - 這道關卡目前**還沒有下游**——發布功能還沒做。它現在的價值是：留下「有人看過並負責」的紀錄（規範要求的必經關卡），以及給審核者一份待審清單。等社群發布做出來時，它就是那個前置條件。
+  - **版面裝飾層＋背景置換降級（第九個切片）**：實測發現 `replace` 的品質**完全取決於那張照片好不好去背**——元寶四腳伸長趴在淺色床單上、毛色跟床單同一個亮度，SAM3 只抓到 4.89% 的一小塊，合成後貼回去的只有那一小塊真貓，其餘整張被取樣器重畫成一隻**生成的大貓**，真貓碎片黏在牠臉上。而「找不到寵物就中止」的門檻（0.5%）防的是「完全找不到」，分辨不出「只找到一部分」。
+    - **`config.BACKGROUND_ALLOW_SCRIPT_REPLACE` 預設 0：腳本只能選 `keep`／`extend`**。理由是資訊上的，不是品質上的——**腳本模型看不到照片**，它只讀得到檔名和 Profile，不可能判斷「這張適不適合去背」。`keep`／`extend` 都不碰相機拍到的像素，不會這樣壞掉。腳本若仍寫了 `replace`，`resolve_scene_background()` 會**降級成 `extend`**（鏡頭照樣做出來），並由 `pipeline/qa.py` 回報，不會靜悄悄發生。置換保留給**看過那張照片的人**在審核介面上針對單一鏡頭指定。
+    - **`pipeline/decoration.py`（版面裝飾）**：內縮邊框、柔和暈影、以及開場前 3 秒的寵物資訊卡（名字·年齡·性別·品種）。全部是 FFmpeg 合成、**不經過任何模型**——同樣輸入永遠同樣輸出、不可能改到寵物、不需要揭露標示，這正是它跟背景置換的差別。跟字幕燒在同一條 filter chain 裡，不多一次編碼。
+    - **用哪一套外觀是照腳本的 `style` 決定的**（萌系/溫暖故事/反差幽默各一個主色）。創作決定已經寫在腳本裡（符合「畫面上的創作決定要寫在腳本裡」那條），而每個 style **長什麼樣**是設計系統，屬於 `config.DECOR_*`，不是讓 7B 模型每次自己編。
+    - 邊框是**畫在畫面內**（drawbox）而不是外加，每個 clip 都必須維持一模一樣的輸出尺寸，否則 concat 就不能再 stream-copy。
+    - **字幕換行**（`wrap_burned_text`）：drawtext 不會自動換行，超過畫面寬度就是左右被裁掉、而且不報錯。實測腳本模型寫出 46 字的英文字幕時整句被切掉兩端。中文按字斷、英文按空白斷，一個中文字算 2 個半形單位。字幕的 y 座標改成**以文字區塊底部對齊**（`y=h-200-text_h`），兩行字幕才會往上長而不是掉出畫面。
+    - 這次也修掉一個**我自己造成的回歸**：背景規則裡「一律用英文」講太多次，7B 模型把它套用到整個輸出，`subtitle` 全變成英文。規則已改成明確限定範圍——只有 `background.prompt` 和 `art_direction` 是英文，`narration`／`subtitle`／`title`／`story_arc` 一律繁體中文。
   - **給非工程使用者的表單化 UI**：Pet Profile 不再只有 JSON textarea——`webapp/static/index.html` 現在是中文欄位表單（基本資料／健康狀態勾選／個性標籤 chip 編輯器／故事與領養條件／照片影片清單含縮圖／外觀特徵摺疊區），JSON 直編退居「進階」摺疊區（可「套用到上方表單」，但仍要按表單的儲存鈕才寫入 DB）。表單會保留 schema 中沒有對應 widget 的欄位再合併回去，不會靜默丟資料。**檔案路徑欄位改成用選的**：瀏覽器拿不到本機檔案的真實路徑，所以「從電腦選擇」＝開 OS 檔案對話框→上傳到 `storage/assets/<pet_id>/`→用存下來那份的相對路徑；新增 `POST /api/pets/{pet_id}/assets`（副檔名 allowlist、檔名淨化、同名不覆蓋、pet_id 先做字元檢查＋ `storage/assets/` 包含性檢查再查 DB）、`GET /api/pets/{pet_id}/assets`（列出已上傳檔案給下拉選單）、`GET /api/profile-files`（匯入表單改成下拉選單），照片縮圖走唯讀的 `/media` static mount。單鏡頭重生的「換素材」也從手打 asset_id 改成從該寵物素材下拉選。上傳需要先有 pet_id（新寵物要先存檔才能傳照片）。
 
 `GenerationJob` 現在是**開跑就建檔**：`start_generation_job()` 在慢工作開始前先寫一筆 `status=running`，結束時 `finish_generation_job()`（`done`＋ output_path/script_json）或 `fail_generation_job()`（`failed`＋錯誤原因）收尾，所以跑到一半崩潰／重啟不再是「完全沒紀錄」。狀態值是 `pipeline/models.py` 的 `JobStatus`（`running`／`done`／`failed`）。

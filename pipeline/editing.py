@@ -3,7 +3,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from pipeline import config
+from pipeline import config, decoration
 
 PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 
@@ -21,6 +21,61 @@ FRAME_RATE = 25
 # this multiple of the output size — zooming into a 1080x1920 picture that is
 # already at output resolution is what makes a photo scene look soft.
 PHOTO_SUPERSAMPLE = 2
+
+
+def _display_width(text: str) -> int:
+    """Width of a string in half-width units.
+
+    A CJK character occupies roughly twice the width of a latin one at the
+    same point size, so counting characters would wrap Chinese far too late
+    and English far too early.
+    """
+    return sum(2 if ord(char) > 0x2E7F else 1 for char in text)
+
+
+def wrap_burned_text(text: str, max_units: int) -> str:
+    """Break text into lines that fit the frame.
+
+    drawtext renders newlines as separate lines but will not introduce them:
+    anything wider than the video is cut off at both edges, with no error and
+    nothing in the output to say so. Latin text breaks at spaces; CJK has
+    none, so it breaks between characters, which is how it is set anyway.
+    """
+    lines: list[str] = []
+    current = ""
+
+    for token, separator in _tokens(text):
+        candidate = current + separator + token if current else token
+        if current and _display_width(candidate) > max_units:
+            lines.append(current)
+            current = token
+        else:
+            current = candidate
+
+    if current:
+        lines.append(current)
+    return "\n".join(lines)
+
+
+def _tokens(text: str):
+    """(token, separator) pairs: latin words with the space before them, and
+    CJK characters on their own."""
+    word = ""
+    for char in text:
+        if char.isspace():
+            if word:
+                yield word, " "
+                word = ""
+            continue
+        if ord(char) > 0x2E7F:
+            if word:
+                yield word, " "
+                word = ""
+            yield char, ""
+        else:
+            word += char
+    if word:
+        yield word, " "
 
 
 def _write_text_file(text: str, output_path: str, *, suffix: str) -> Path:
@@ -170,6 +225,8 @@ def build_scene_clip(
     subtitle_text: str,
     output_path: str,
     disclosure_text: str | None = None,
+    accent_colour: str | None = None,
+    info_card_text: str | None = None,
 ) -> str:
     """Render one scene's video (no audio): real video or photo (Ken Burns
     zoom) with burned subtitle. Real-footage-first per
@@ -183,7 +240,14 @@ def build_scene_clip(
     function decides: only the caller knows how a given shot was made, and a
     label that appeared on shots that didn't need one would stop meaning
     anything. Smaller and lighter than the subtitle — it has to be legible
-    and unmissable, not compete with the message."""
+    and unmissable, not compete with the message.
+
+    accent_colour turns on the layout treatment (pipeline/decoration.py): an
+    inset frame in that colour and a gentle vignette. info_card_text is the
+    pet's name and age, held for the first few seconds only — it competes
+    with the hook, and after the hook has landed the viewer already knows.
+    Both are composited into the same filter chain as the subtitle rather
+    than in a second pass, so dressing a shot costs no extra encode."""
     is_photo = Path(visual_path).suffix.lower() in PHOTO_EXTENSIONS
 
     if is_photo:
@@ -200,7 +264,19 @@ def build_scene_clip(
         # loop so -t below can always fill the full scene length.
         video_input = ["-stream_loop", "-1", "-i", visual_path]
 
-    subtitle_file = _write_text_file(subtitle_text, output_path, suffix=".subtitle.txt")
+    # Before the text, so the frame is shaped and darkened underneath rather
+    # than over the words that have to stay legible.
+    if accent_colour:
+        video_filter += (
+            f"{decoration.vignette_filter()},"
+            f"{decoration.border_filter(accent_colour, FRAME_WIDTH, FRAME_HEIGHT)},"
+        )
+
+    subtitle_file = _write_text_file(
+        wrap_burned_text(subtitle_text, config.SUBTITLE_MAX_UNITS),
+        output_path,
+        suffix=".subtitle.txt",
+    )
     drawtext = (
         f"drawtext=fontfile='{_escape_filter_path(config.DRAWTEXT_FONT_FILE)}':"
         f"textfile='{_escape_filter_path(str(subtitle_file))}':"
@@ -208,7 +284,10 @@ def build_scene_clip(
         # "%" or "{" in it must not be interpreted by drawtext.
         "expansion=none:"
         "fontcolor=white:fontsize=54:box=1:boxcolor=black@0.5:boxborderw=12:"
-        "x=(w-text_w)/2:y=h-260"
+        # Anchored by the bottom of the text block, not its top, so a
+        # subtitle that wrapped to two lines grows upward into the picture
+        # instead of downward off the frame.
+        "x=(w-text_w)/2:y=h-200-text_h"
     )
 
     if disclosure_text:
@@ -219,6 +298,20 @@ def build_scene_clip(
             "expansion=none:"
             "fontcolor=white:fontsize=32:box=1:boxcolor=black@0.45:boxborderw=8:"
             "x=(w-text_w)/2:y=80"
+        )
+
+    if info_card_text:
+        info_file = _write_text_file(info_card_text, output_path, suffix=".info.txt")
+        drawtext += (
+            f",drawtext=fontfile='{_escape_filter_path(config.DRAWTEXT_FONT_FILE)}':"
+            f"textfile='{_escape_filter_path(str(info_file))}':"
+            "expansion=none:"
+            f"fontcolor=white:fontsize={config.DECOR_INFO_CARD_FONT_SIZE}:"
+            "box=1:boxcolor=black@0.55:boxborderw=16:"
+            f"x=(w-text_w)/2:y={config.DECOR_INFO_CARD_Y}:"
+            # Held only while the viewer is deciding whether to keep
+            # watching; after that it is in the way of the shot it sits on.
+            f"enable='lt(t,{config.DECOR_INFO_CARD_SECONDS})'"
         )
 
     cmd = [
@@ -271,6 +364,7 @@ def build_recap_clip(
     duration: float,
     subtitle_text: str,
     output_path: str,
+    accent_colour: str | None = None,
 ) -> str:
     """Render one shot that cuts through several assets in turn.
 
@@ -291,6 +385,7 @@ def build_recap_clip(
                 duration=per_asset,
                 subtitle_text=subtitle_text,
                 output_path=str(part),
+                accent_colour=accent_colour,
             )
         )
     return concat_video_only(parts, output_path)
