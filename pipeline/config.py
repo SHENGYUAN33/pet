@@ -545,3 +545,82 @@ SUBTITLE_FONT_SIZE = int(os.getenv("SUBTITLE_FONT_SIZE", "54"))
 #
 # Measured for this face at this size: change either and measure again.
 SUBTITLE_LINE_SPACING = int(os.getenv("SUBTITLE_LINE_SPACING", "-32"))
+
+# --- 版面字型 / Overlay typefaces ---------------------------------------------
+# One face for everything reads as a system dialog, not as something made for
+# a shelter's audience. Two roles, chosen by what the panel is doing:
+#
+#   HANDWRITTEN  the held quote — the pet's own voice, so it should not look
+#                typeset. Open-source options that suit it: 辰宇落雁體
+#                (ChenYuluoyan), 隨峰體 (SuiFeng).
+#   ROUND        the bubble, the sidebar and the contact card — information a
+#                reader has to take in quickly, warm rather than clinical.
+#                Open-source: 粉圓體 (Huninn), 芫荽體 (Cilantro).
+#
+# Neither is shipped: fonts are large binaries with their own licences, and
+# nothing binary goes into version control (the same rule that has
+# pipeline/stickers.py drawing its shapes). Drop the .ttf into
+# storage/fonts/ and point these at it.
+#
+# The defaults are what this machine actually has. 標楷體 (kaiu) is a stand-in
+# for the handwritten role, not a match: it is a formal kai face, but it is
+# brush-derived and reads far less mechanical than 正黑體 next to it. Anything
+# unreadable falls back to DRAWTEXT_FONT_FILE, so a missing file costs a
+# typeface and never a video.
+OVERLAY_FONT_HANDWRITTEN = os.getenv("OVERLAY_FONT_HANDWRITTEN", r"C:\Windows\Fonts\kaiu.ttf")
+OVERLAY_FONT_ROUND = os.getenv("OVERLAY_FONT_ROUND", r"C:\Windows\Fonts\msjh.ttc")
+
+# --- 版面立體感 / Overlay depth ------------------------------------------------
+# A flat white rectangle on a photograph reads as a screenshot pasted over it.
+# A soft drop shadow is what makes it read as a card lying on the picture —
+# and it is the cheapest possible way to get there, since it is the panel's
+# own alpha, blurred and darkened.
+#
+# Kept weak on purpose: a shadow anyone notices as a shadow is too strong.
+OVERLAY_SHADOW_BLUR = int(os.getenv("OVERLAY_SHADOW_BLUR", "8"))
+OVERLAY_SHADOW_OPACITY = float(os.getenv("OVERLAY_SHADOW_OPACITY", "0.15"))
+OVERLAY_SHADOW_OFFSET_Y = int(os.getenv("OVERLAY_SHADOW_OFFSET_Y", "6"))
+OVERLAY_SHADOW_OFFSET_X = int(os.getenv("OVERLAY_SHADOW_OFFSET_X", "0"))
+# How far a speech bubble tilts, in degrees. Fixed rather than random: the
+# same video has to render the same way twice, or a resumed run produces a
+# shot that does not match the one it is continuing (the same reason
+# BACKGROUND_SEED is pinned). The sign alternates by scene so consecutive
+# bubbles do not lean the same way.
+OVERLAY_BUBBLE_TILT = float(os.getenv("OVERLAY_BUBBLE_TILT", "3.0"))
+
+# --- 版面圖示 / Overlay icons --------------------------------------------------
+# A small mark in front of each sidebar line, so the panel scans as a list of
+# facts rather than a paragraph. Drawn with Pillow for the same three reasons
+# the stickers are (nothing binary in version control, tinted to the video's
+# own accent, deterministic) — see pipeline/stickers.py.
+#
+# Which mark a line gets is keyed off words in the line itself, because the
+# line is written by the script model and there is no structured field to
+# read. Unmatched lines get the neutral one rather than no icon: a list where
+# some rows are indented and others are not looks broken.
+OVERLAY_ICONS_ENABLED = os.getenv("OVERLAY_ICONS_ENABLED", "1").lower() not in {
+    "0",
+    "false",
+    "no",
+}
+OVERLAY_ICON_SIZE = int(os.getenv("OVERLAY_ICON_SIZE", "30"))
+OVERLAY_ICON_GAP = int(os.getenv("OVERLAY_ICON_GAP", "12"))
+# Keyword -> icon shape. Matched as substrings against the line, first hit
+# wins, so order matters: "健康檢查" must not be read as "檢查" alone.
+OVERLAY_ICON_KEYWORDS: tuple[tuple[str, str], ...] = (
+    ("年齡", "cake"),
+    ("歲", "cake"),
+    ("生日", "cake"),
+    ("疫苗", "syringe"),
+    ("結紮", "syringe"),
+    ("晶片", "syringe"),
+    ("健康", "syringe"),
+    ("驅蟲", "syringe"),
+    ("個性", "heart"),
+    ("性格", "heart"),
+    ("親人", "heart"),
+    ("品種", "paw"),
+    ("性別", "paw"),
+    ("體型", "paw"),
+)
+OVERLAY_ICON_DEFAULT = os.getenv("OVERLAY_ICON_DEFAULT", "paw")

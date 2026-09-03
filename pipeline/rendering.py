@@ -281,7 +281,7 @@ def render_script(
     first_scene_id = script["scenes"][0]["scene_id"] if script["scenes"] else None
     info_card_text = decoration.identity_line(profile) if config.DECOR_ENABLED else None
 
-    def overlay_for(scene: dict, scene_id: int) -> Path | None:
+    def overlay_for(scene: dict, scene_id: int, scene_index: int) -> Path | None:
         """This shot's composed panel, drawn into the job's work_dir.
 
         Redrawn rather than cached across runs: it costs milliseconds, and a
@@ -304,6 +304,11 @@ def render_script(
             height=FRAME_HEIGHT,
             accent=resolved_accent,
             output_path=work_dir / f"scene_{scene_id}_overlay.png",
+            # Only decides which way a tilted panel leans, so consecutive
+            # bubbles do not lean identically. Derived from the shot rather
+            # than drawn at random: a resumed run has to reproduce the shot
+            # it is continuing, not a subtly different one.
+            scene_index=scene_index,
         )
 
     video_clip_paths = []
@@ -428,7 +433,7 @@ def render_script(
                     )
                     if resolved_accent
                     else None,
-                    overlay_path=overlay_for(scene, scene_id),
+                    overlay_path=overlay_for(scene, scene_id, index),
                 )
         except Exception as e:
             # Boundary: FFmpeg and the I2V providers are external. Record
