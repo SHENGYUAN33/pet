@@ -181,6 +181,8 @@
 
         所以 strength 0.35 在玩偶區不是「沒幫上忙」，是主動在告訴取樣器「這裡沒有任何結構」。修的方向是**把 strength 依 placement 拆開**（`collar` 維持 0.35；`toy` 調降或直接 0，讓 SDXL 純靠 prompt 生成結構），必要時再加形狀提示（先在遮罩內填一塊低透明度的剪影當 latent guide）。**動之前先重測這兩個數字**——它們是對這兩張照片量的，換素材會不一樣。
 
+        **調降或關掉 ControlNet 不會放寬任何安全防線。** 保護五官不走樣的是 `ImageCompositeMasked`——遮罩外的像素原封不動貼回去——而它在道具功能出現之前就在了，跟 ControlNet 完全無關。ControlNet 是**美學引導**（讓道具貼合身體形狀），不是安全約束。這兩件事在這裡刻意分開講，是因為上面那條建議正是最容易讓人誤以為「動了 strength 就等於動了防線」的地方。
+
   - **給非工程使用者的表單化 UI**：Pet Profile 不再只有 JSON textarea——`webapp/static/index.html` 現在是中文欄位表單（基本資料／健康狀態勾選／個性標籤 chip 編輯器／故事與領養條件／照片影片清單含縮圖／外觀特徵摺疊區），JSON 直編退居「進階」摺疊區（可「套用到上方表單」，但仍要按表單的儲存鈕才寫入 DB）。表單會保留 schema 中沒有對應 widget 的欄位再合併回去，不會靜默丟資料。**檔案路徑欄位改成用選的**：瀏覽器拿不到本機檔案的真實路徑，所以「從電腦選擇」＝開 OS 檔案對話框→上傳到 `storage/assets/<pet_id>/`→用存下來那份的相對路徑；新增 `POST /api/pets/{pet_id}/assets`（副檔名 allowlist、檔名淨化、同名不覆蓋、pet_id 先做字元檢查＋ `storage/assets/` 包含性檢查再查 DB）、`GET /api/pets/{pet_id}/assets`（列出已上傳檔案給下拉選單）、`GET /api/profile-files`（匯入表單改成下拉選單），照片縮圖走唯讀的 `/media` static mount。單鏡頭重生的「換素材」也從手打 asset_id 改成從該寵物素材下拉選。上傳需要先有 pet_id（新寵物要先存檔才能傳照片）。
 
 `GenerationJob` 現在是**開跑就建檔**：`start_generation_job()` 在慢工作開始前先寫一筆 `status=running`，結束時 `finish_generation_job()`（`done`＋ output_path/script_json）或 `fail_generation_job()`（`failed`＋錯誤原因）收尾，所以跑到一半崩潰／重啟不再是「完全沒紀錄」。狀態值是 `pipeline/models.py` 的 `JobStatus`（`running`／`done`／`failed`）。
