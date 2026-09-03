@@ -72,6 +72,55 @@ MASK_IMAGE = "18"
 SAVE_MASK = "19"
 
 
+# --- props ------------------------------------------------------------------
+#
+# Node ids for the prop graph. A separate range from the background graph's
+# above: the two share a server and a checkpoint but not a single node, and
+# reusing "3" for something else in both is how a graph stops being readable.
+P_LOAD = "30"
+P_CHECKPOINT = "31"
+P_POSITIVE = "32"
+P_NEGATIVE = "33"
+P_MATTE_MODEL = "34"
+P_SUBJECT_TEXT = "35"
+P_MATTE = "36"
+P_SUBJECT_MASK = "37"
+P_REGION_BASE = "38"
+P_REGION_PATCH = "39"
+P_REGION = "40"
+P_TARGET = "41"
+P_SOFT_TARGET = "42"
+P_ENCODE = "43"
+P_CANNY = "44"
+P_CONTROLNET = "45"
+P_CONTROL_APPLY = "46"
+P_SAMPLER = "47"
+P_DECODE = "48"
+P_INVERTED = "49"
+P_COMPOSITE = "50"
+P_SAVE = "51"
+P_MASK_IMAGE = "52"
+P_SAVE_MASK = "53"
+
+
+def region_pixels(
+    region: tuple[float, float, float, float], width: int, height: int
+) -> tuple[int, int, int, int]:
+    """Turn a fractional (left, top, right, bottom) into (x, y, w, h) pixels.
+
+    Clamped to the image and to at least one pixel each way: the fractions
+    come from a person dragging a box in a UI, and a reversed or off-canvas
+    drag should produce a small region rather than a ComfyUI error about a
+    negative SolidMask.
+    """
+    left, top, right, bottom = region
+    x0 = int(max(0.0, min(1.0, min(left, right))) * width)
+    y0 = int(max(0.0, min(1.0, min(top, bottom))) * height)
+    x1 = int(max(0.0, min(1.0, max(left, right))) * width)
+    y1 = int(max(0.0, min(1.0, max(top, bottom))) * height)
+    return x0, y0, max(1, x1 - x0), max(1, y1 - y0)
+
+
 class OutpaintMargins:
     """How much to add on each side, and what the photo is scaled to first.
 
@@ -495,6 +544,339 @@ class ComfyBackgroundProvider(ImageEditingProvider):
             "inputs": {"images": [MASK_IMAGE, 0], "filename_prefix": f"{output_prefix}_mask"},
         }
         return graph
+
+    def _prop_matte_nodes(self, subject: str) -> dict:
+        """A mask of the animal, on the photograph at its own size.
+
+        Simpler than the background graph's equivalent: nothing is padded or
+        rescaled here, because a prop is painted onto the photo as it was
+        taken and the framing work happens later in the pipeline. So the
+        matte needs no placing onto a larger canvas — it is already in
+        register with the image the sampler sees.
+        """
+        if config.BACKGROUND_MATTE_BACKEND == "birefnet":
+            return {
+                P_MATTE_MODEL: {
+                    "class_type": "LoadBackgroundRemovalModel",
+                    "inputs": {"bg_removal_name": config.BACKGROUND_MATTE_MODEL_FILE},
+                },
+                P_MATTE: {
+                    "class_type": "RemoveBackground",
+                    "inputs": {"bg_removal_model": [P_MATTE_MODEL, 0], "image": [P_LOAD, 0]},
+                },
+            }
+
+        return {
+            P_MATTE_MODEL: {
+                "class_type": "CheckpointLoaderSimple",
+                "inputs": {"ckpt_name": config.BACKGROUND_SAM3_MODEL_FILE},
+            },
+            P_SUBJECT_TEXT: {
+                "class_type": "CLIPTextEncode",
+                "inputs": {"text": subject, "clip": [P_MATTE_MODEL, 1]},
+            },
+            P_MATTE: {
+                "class_type": "SAM3_Detect",
+                "inputs": {
+                    "model": [P_MATTE_MODEL, 0],
+                    "image": [P_LOAD, 0],
+                    "conditioning": [P_SUBJECT_TEXT, 0],
+                    "threshold": config.BACKGROUND_SAM3_THRESHOLD,
+                    "refine_iterations": config.BACKGROUND_SAM3_REFINE_ITERATIONS,
+                    "individual_masks": False,
+                },
+            },
+        }
+
+    def _prop_graph(
+        self,
+        image_filename: str,
+        *,
+        region: tuple[float, float, float, float],
+        on_subject: bool,
+        prompt: str,
+        subject: str,
+        width: int,
+        height: int,
+        output_prefix: str,
+    ) -> dict:
+        """Paint one object into one region of the photograph.
+
+        The shape of it: the reviewer's rectangle is turned into a mask, met
+        with the animal's own silhouette, softened, and handed to an inpaint
+        sampler that is additionally held to the photograph's edges by a
+        Canny ControlNet. Everything outside that mask is composited straight
+        back from the original.
+
+        Three parts are worth explaining because a reader will otherwise
+        assume the obvious version:
+
+        The rectangle alone is not the mask. A collar painted into a bare
+        rectangle spills onto whatever is behind the animal, so the region is
+        multiplied by the subject mask — the paint can only land on the
+        animal. A toy is the other way round: subtracted, so it is placed
+        beside the animal rather than through it. That is the whole meaning
+        of on_subject, and it is why this cannot be done with a plain
+        rectangular inpaint.
+
+        ControlNet is not what protects the animal's face. The composite at
+        the end does that, and did before this existed: pixels outside the
+        mask are the original's, full stop. What Canny buys is a prop that
+        follows the body's real edges instead of sitting on top of them —
+        conformity, not safety. Strength is deliberately below 1.0 so it
+        guides rather than dictates; at 1.0 the sampler tries to reproduce
+        the edge map exactly and paints an outline rather than an object.
+
+        The subject mask is saved as its own output. It is the only way to
+        tell afterwards whether the segmenter actually found the animal, and
+        a prop painted where there is no animal is the failure this shares
+        with a replaced background.
+        """
+        x, y, region_width, region_height = region_pixels(region, width, height)
+        return {
+            P_LOAD: {"class_type": "LoadImage", "inputs": {"image": image_filename}},
+            P_CHECKPOINT: {
+                "class_type": "CheckpointLoaderSimple",
+                "inputs": {"ckpt_name": config.BACKGROUND_MODEL_FILE},
+            },
+            P_POSITIVE: {
+                "class_type": "CLIPTextEncode",
+                "inputs": {"text": prompt, "clip": [P_CHECKPOINT, 1]},
+            },
+            P_NEGATIVE: {
+                "class_type": "CLIPTextEncode",
+                "inputs": {"text": config.PROPS_NEGATIVE_PROMPT, "clip": [P_CHECKPOINT, 1]},
+            },
+            **self._prop_matte_nodes(subject),
+            P_SUBJECT_MASK: {
+                # Matting returns confidences; the region arithmetic below is
+                # set operations, which need a yes/no mask. Same reason the
+                # replace graph thresholds before compositing.
+                "class_type": "ThresholdMask",
+                "inputs": {"mask": [P_MATTE, 0], "value": config.BACKGROUND_MATTE_THRESHOLD},
+            },
+            P_REGION_BASE: {
+                "class_type": "SolidMask",
+                "inputs": {"value": 0.0, "width": width, "height": height},
+            },
+            P_REGION_PATCH: {
+                "class_type": "SolidMask",
+                "inputs": {"value": 1.0, "width": region_width, "height": region_height},
+            },
+            P_REGION: {
+                "class_type": "MaskComposite",
+                "inputs": {
+                    "destination": [P_REGION_BASE, 0],
+                    "source": [P_REGION_PATCH, 0],
+                    "x": x,
+                    "y": y,
+                    "operation": "add",
+                },
+            },
+            P_TARGET: {
+                "class_type": "MaskComposite",
+                "inputs": {
+                    "destination": [P_REGION, 0],
+                    "source": [P_SUBJECT_MASK, 0],
+                    "x": 0,
+                    "y": 0,
+                    # "multiply" is the intersection: paint only where the
+                    # reviewer's box and the animal overlap. "subtract" is the
+                    # complement within the box: beside the animal, never on
+                    # it.
+                    "operation": "multiply" if on_subject else "subtract",
+                },
+            },
+            P_SOFT_TARGET: {
+                "class_type": "GrowMaskWithBlur",
+                "inputs": {
+                    "mask": [P_TARGET, 0],
+                    "expand": config.PROPS_MASK_GROW,
+                    "incremental_expandrate": 0.0,
+                    "tapered_corners": True,
+                    "flip_input": False,
+                    "blur_radius": config.PROPS_MASK_FEATHER,
+                    "lerp_alpha": 1.0,
+                    "decay_factor": 1.0,
+                    # Off: on a clean matte this returns solid white, which
+                    # would mean "the whole frame is the region" and repaint
+                    # the entire photograph. Measured on the background graph,
+                    # and the same node behaves the same way here.
+                    "fill_holes": False,
+                },
+            },
+            P_ENCODE: {
+                "class_type": "VAEEncodeForInpaint",
+                "inputs": {
+                    "pixels": [P_LOAD, 0],
+                    "vae": [P_CHECKPOINT, 2],
+                    "mask": [P_SOFT_TARGET, 0],
+                    "grow_mask_by": config.PROPS_MASK_GROW,
+                },
+            },
+            P_CANNY: {
+                "class_type": "Canny",
+                "inputs": {
+                    "image": [P_LOAD, 0],
+                    "low_threshold": config.PROPS_CANNY_LOW,
+                    "high_threshold": config.PROPS_CANNY_HIGH,
+                },
+            },
+            P_CONTROLNET: {
+                "class_type": "ControlNetLoader",
+                "inputs": {"control_net_name": config.PROPS_CONTROLNET_FILE},
+            },
+            P_CONTROL_APPLY: {
+                "class_type": "ControlNetApplyAdvanced",
+                "inputs": {
+                    "positive": [P_POSITIVE, 0],
+                    "negative": [P_NEGATIVE, 0],
+                    "control_net": [P_CONTROLNET, 0],
+                    "image": [P_CANNY, 0],
+                    "strength": config.PROPS_CONTROLNET_STRENGTH,
+                    "start_percent": 0.0,
+                    # Released partway so the later steps are free to form the
+                    # prop's own edges, which are not in the photograph and so
+                    # are not in the hint. Measured: held to 0.8 at strength
+                    # 0.65, no collar appeared at all.
+                    "end_percent": config.PROPS_CONTROLNET_END,
+                },
+            },
+            P_SAMPLER: {
+                "class_type": "KSampler",
+                "inputs": {
+                    "model": [P_CHECKPOINT, 0],
+                    "seed": config.PROPS_SEED,
+                    "steps": config.PROPS_STEPS,
+                    "cfg": config.PROPS_CFG,
+                    "sampler_name": config.BACKGROUND_SAMPLER,
+                    "scheduler": config.BACKGROUND_SCHEDULER,
+                    "positive": [P_CONTROL_APPLY, 0],
+                    "negative": [P_CONTROL_APPLY, 1],
+                    "latent_image": [P_ENCODE, 0],
+                    "denoise": config.PROPS_DENOISE,
+                },
+            },
+            P_DECODE: {
+                "class_type": "VAEDecode",
+                "inputs": {"samples": [P_SAMPLER, 0], "vae": [P_CHECKPOINT, 2]},
+            },
+            P_INVERTED: {"class_type": "InvertMask", "inputs": {"mask": [P_SOFT_TARGET, 0]}},
+            P_COMPOSITE: {
+                "class_type": "ImageCompositeMasked",
+                "inputs": {
+                    "destination": [P_DECODE, 0],
+                    "source": [P_LOAD, 0],
+                    "x": 0,
+                    "y": 0,
+                    "resize_source": False,
+                    # Everything the sampler was not asked to touch comes back
+                    # from the photograph. VAEDecode returns the whole frame
+                    # rebuilt from latents — softer and colour-shifted — so
+                    # without this the "only the region changes" promise is
+                    # just words.
+                    "mask": [P_INVERTED, 0],
+                },
+            },
+            P_MASK_IMAGE: {"class_type": "MaskToImage", "inputs": {"mask": [P_SUBJECT_MASK, 0]}},
+            P_SAVE_MASK: {
+                "class_type": "SaveImage",
+                "inputs": {"images": [P_MASK_IMAGE, 0], "filename_prefix": output_prefix + "_mask"},
+            },
+            P_SAVE: {
+                "class_type": "SaveImage",
+                "inputs": {"images": [P_COMPOSITE, 0], "filename_prefix": output_prefix},
+            },
+        }
+
+    def preflight_props(self) -> None:
+        """Raise if a prop run clearly cannot start.
+
+        Its own method rather than another `mode` on preflight(): props need
+        the ControlNet that neither background treatment loads, and a
+        background run must not be refused for missing it.
+        """
+        self.client.ping()
+
+        checkpoints = self.client.node_options("CheckpointLoaderSimple", "ckpt_name")
+        if config.BACKGROUND_MODEL_FILE not in checkpoints:
+            raise RuntimeError(
+                f"ComfyUI has no checkpoint named {config.BACKGROUND_MODEL_FILE!r} "
+                f"(installed: {checkpoints or 'none'}). Put a Stable Diffusion XL "
+                f"checkpoint in {config.WAN_COMFYUI_DIR / 'models' / 'checkpoints'} "
+                "and restart ComfyUI."
+            )
+
+        controlnets = self.client.node_options("ControlNetLoader", "control_net_name")
+        if config.PROPS_CONTROLNET_FILE not in controlnets:
+            raise RuntimeError(
+                f"ComfyUI has no ControlNet named {config.PROPS_CONTROLNET_FILE!r} "
+                f"(installed: {controlnets or 'none'}) — adding a prop needs one to hold "
+                "the animal's own edges while the region is repainted. Put an SDXL Canny "
+                f"ControlNet in {config.WAN_COMFYUI_DIR / 'models' / 'controlnet'} "
+                "(diffusers/controlnet-canny-sdxl-1.0 on Hugging Face) and restart ComfyUI."
+            )
+
+        if config.BACKGROUND_MATTE_BACKEND == "birefnet":
+            mattes = self.client.node_options("LoadBackgroundRemovalModel", "bg_removal_name")
+            if config.BACKGROUND_MATTE_MODEL_FILE not in mattes:
+                raise RuntimeError(
+                    f"ComfyUI has no background-removal model named "
+                    f"{config.BACKGROUND_MATTE_MODEL_FILE!r} (installed: {mattes or 'none'}) — "
+                    "a prop has to be placed against the animal's own outline. Put BiRefNet in "
+                    f"{config.WAN_COMFYUI_DIR / 'models' / 'background_removal'} and restart."
+                )
+        elif config.BACKGROUND_SAM3_MODEL_FILE not in checkpoints:
+            raise RuntimeError(
+                f"ComfyUI has no checkpoint named {config.BACKGROUND_SAM3_MODEL_FILE!r} "
+                f"(installed: {checkpoints or 'none'}) — a prop has to be placed against the "
+                f"animal's own outline. Put SAM3 in "
+                f"{config.WAN_COMFYUI_DIR / 'models' / 'checkpoints'} and restart ComfyUI, "
+                "or set BACKGROUND_MATTE_BACKEND=birefnet."
+            )
+
+    def add_prop(
+        self,
+        image_path: str,
+        *,
+        region: tuple[float, float, float, float],
+        on_subject: bool,
+        prompt: str | None = None,
+        output_path: str,
+        subject: str | None = None,
+    ) -> str:
+        width, height = probe_image_size(image_path)
+        uploaded = self.client.upload_image(image_path)
+        output_prefix = Path(output_path).stem
+
+        graph = self._prop_graph(
+            uploaded,
+            region=region,
+            on_subject=on_subject,
+            prompt=prompt or config.PROPS_COLLAR_PROMPT,
+            subject=subject or config.BACKGROUND_SUBJECT_FALLBACK,
+            width=width,
+            height=height,
+            output_prefix=output_prefix,
+        )
+        entry = self.client.run(graph)
+
+        # Checked before the picture is fetched: if the animal was never
+        # found, the region the reviewer named is not on any animal and the
+        # result is a prop lying on an empty floor.
+        mask_path = Path(output_path).with_suffix(".mask.png")
+        self.client.fetch_output(entry["outputs"][P_SAVE_MASK]["images"][0], str(mask_path))
+        coverage = mask_coverage(str(mask_path))
+        if coverage < config.PROPS_MIN_SUBJECT_COVERAGE:
+            raise RuntimeError(
+                f"Nothing matching {subject or config.BACKGROUND_SUBJECT_FALLBACK!r} was found "
+                f"in {image_path} (it covers {coverage:.2%} of the frame, below "
+                f"{config.PROPS_MIN_SUBJECT_COVERAGE:.2%}), so the prop would have been painted "
+                f"onto an empty picture. Check that this asset is a photo of the pet. The mask "
+                f"that was produced is at {mask_path}."
+            )
+
+        return self.client.fetch_output(entry["outputs"][P_SAVE]["images"][0], output_path)
 
     def preflight(self, *, mode: str = "extend") -> None:
         self.client.ping()

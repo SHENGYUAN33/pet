@@ -624,3 +624,105 @@ OVERLAY_ICON_KEYWORDS: tuple[tuple[str, str], ...] = (
     ("體型", "paw"),
 )
 OVERLAY_ICON_DEFAULT = os.getenv("OVERLAY_ICON_DEFAULT", "paw")
+
+# --- 局部道具 / Props on the pet (docs/architecture.md §5 strategy C) ---------
+# Painting a small object onto the animal itself: a collar around its neck, a
+# toy beside its paws.
+#
+# This is a different kind of edit from anything above it, and the difference
+# is not cosmetic. Every background treatment ends by compositing the pet's
+# real pixels back (ImageCompositeMasked), so the guarantee is "the animal is
+# never repainted". A collar cannot honour that — the band has to sit *on*
+# the animal, which means deliberately not pasting part of it back. So:
+#
+#   * it always carries the AI-generation disclosure, like REPLACE;
+#   * a script may never choose it (PROPS_ALLOW_SCRIPT below), because a model
+#     that cannot see the photograph cannot judge whether the animal is in a
+#     pose where this works;
+#   * the region is named by the person looking at the photo, not guessed
+#     from a fixed fraction of the bounding box. A first design took "the top
+#     15-30% of the subject" as the neck, which assumes an upright animal
+#     with its head up; the photos in this project are as often top-down, or
+#     of a cat lying on its back, where that band lands on the floor.
+#
+# What is deliberately NOT here: a human hand reaching into frame. A hand
+# touching the animal states that it tolerates being handled by a stranger,
+# which the Profile never said — BACKGROUND_FORBIDDEN_TERMS bans exactly
+# those words from a generated setting for that reason, and generating one
+# here would be a back door around pipeline/fact_check.py rather than a
+# feature.
+PROPS_ALLOW_SCRIPT = os.getenv("PROPS_ALLOW_SCRIPT", "0").lower() not in {"0", "false", "no"}
+# ControlNet holds the animal's own edges while the masked area is repainted.
+# It is not what keeps the face intact — the composite does that, and it did
+# before this existed. What it buys is a prop that follows the body's real
+# shape instead of floating on top of it.
+#
+# Canny rather than depth or pose: ComfyUI's Canny node is core, so the edge
+# map needs no custom node pack, and an outline is the right hint for "keep
+# this silhouette" anyway.
+PROPS_CONTROLNET_FILE = os.getenv(
+    "PROPS_CONTROLNET_FILE", "controlnet-canny-sdxl-1.0-fp16.safetensors"
+)
+# Weak, and released early (below). Measured: at 0.65 held to 80% of the
+# steps, a collar simply did not appear — the edge map has no collar in it,
+# so a strong ControlNet is an instruction to keep the neck exactly as
+# photographed, which is the opposite of what a prop pass is for. It has to
+# guide the silhouette without forbidding new edges inside the mask.
+PROPS_CONTROLNET_STRENGTH = float(os.getenv("PROPS_CONTROLNET_STRENGTH", "0.35"))
+# Released partway so the later steps are free to form the prop's own edges
+# and texture, which are not in the photograph and so are not in the hint.
+PROPS_CONTROLNET_END = float(os.getenv("PROPS_CONTROLNET_END", "0.5"))
+PROPS_CANNY_LOW = float(os.getenv("PROPS_CANNY_LOW", "0.2"))
+PROPS_CANNY_HIGH = float(os.getenv("PROPS_CANNY_HIGH", "0.5"))
+PROPS_STEPS = int(os.getenv("PROPS_STEPS", "28"))
+PROPS_CFG = float(os.getenv("PROPS_CFG", "6.5"))
+PROPS_DENOISE = float(os.getenv("PROPS_DENOISE", "1.0"))
+PROPS_SEED = int(os.getenv("PROPS_SEED", "47"))
+# The painted region, as a fraction of the frame, centred on the point the
+# reviewer named. A collar is a band across the body; a toy is a blob beside
+# it, so they are not the same shape.
+PROPS_COLLAR_WIDTH = float(os.getenv("PROPS_COLLAR_WIDTH", "0.42"))
+PROPS_COLLAR_HEIGHT = float(os.getenv("PROPS_COLLAR_HEIGHT", "0.13"))
+PROPS_TOY_WIDTH = float(os.getenv("PROPS_TOY_WIDTH", "0.26"))
+PROPS_TOY_HEIGHT = float(os.getenv("PROPS_TOY_HEIGHT", "0.20"))
+# Softening on the painted region's edge, so the prop meets the photograph
+# gradually rather than on a cut line.
+PROPS_MASK_FEATHER = float(os.getenv("PROPS_MASK_FEATHER", "10"))
+PROPS_MASK_GROW = int(os.getenv("PROPS_MASK_GROW", "4"))
+# English, and for the same reason every other prompt here is: SDXL's text
+# encoders are CLIP, trained on English captions only (see
+# BACKGROUND_DEFAULT_PROMPT). One default per placement, because the two are
+# describing different things.
+PROPS_COLLAR_PROMPT = os.getenv(
+    "PROPS_COLLAR_PROMPT",
+    "photorealistic, a cute soft knitted pet collar around the neck, small "
+    "fabric texture, natural indoor lighting, sharp focus, highly detailed",
+)
+PROPS_TOY_PROMPT = os.getenv(
+    "PROPS_TOY_PROMPT",
+    "photorealistic, a small plush toy resting on the floor, soft fabric "
+    "texture, natural indoor lighting, gentle shadow, sharp focus, highly detailed",
+)
+# The animal is already in the picture; the sampler must add an object, not a
+# second creature or a person. The anatomy terms are here because a mask that
+# clips a paw invites the model to redraw it badly, and a deformed paw on a
+# real adoptable animal is worse than no prop at all.
+PROPS_NEGATIVE_PROMPT = os.getenv(
+    "PROPS_NEGATIVE_PROMPT",
+    "another animal, second pet, extra cat, extra dog, person, human, hand, hands, "
+    "fingers, arm, face, distorted paws, bad anatomy, deformed, extra limbs, "
+    "text, watermark, signature, logo, blurry, lowres",
+)
+# Burned onto any shot wearing a generated prop. The same label a replaced
+# setting carries, and for a stronger reason: this one is painted on the
+# animal itself.
+PROPS_DISCLOSURE_TEXT = os.getenv("PROPS_DISCLOSURE_TEXT", "部分畫面由 AI 創意生成")
+# Smallest share of the frame the subject mask may cover before a prop run is
+# refused. Same guard, same reasoning as BACKGROUND_MIN_SUBJECT_COVERAGE: if
+# SAM3 cannot find the animal, the region the reviewer named is not on any
+# animal, and painting there produces a prop lying on an empty floor.
+# A fraction of the frame, not a percentage — the same units mask_coverage()
+# returns and BACKGROUND_MIN_SUBJECT_COVERAGE uses. Written as 0.5 the first
+# time, which meant 50%% and refused a photo where SAM3 had found the cat
+# perfectly well at 27%%.
+PROPS_MIN_SUBJECT_COVERAGE = float(os.getenv("PROPS_MIN_SUBJECT_COVERAGE", "0.005"))

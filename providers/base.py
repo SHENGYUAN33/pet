@@ -150,6 +150,52 @@ class ImageEditingProvider(ABC):
         implementations that don't need it ignore it.
         """
 
+    def add_prop(
+        self,
+        image_path: str,
+        *,
+        region: tuple[float, float, float, float],
+        on_subject: bool,
+        prompt: str | None = None,
+        output_path: str,
+        subject: str | None = None,
+    ) -> str:
+        """Paint a small object into one named region of image_path, and
+        write the result to output_path (returned).
+
+        Concrete rather than abstract, and that is deliberate: this interface
+        already has implementations, and turning a new capability into a
+        required method breaks every one of them. A provider that cannot do
+        this inherits a clear refusal instead (CLAUDE.md: Provider Adapter
+        介面變更需保持向下相容).
+
+        This is the one operation here that is *allowed* to alter the animal,
+        and the only one. A collar has to sit on the neck, which means the
+        band inside `region` is genuinely repainted rather than composited
+        back — so a shot made this way carries the AI-generation disclosure,
+        exactly like a replaced setting. Everything outside `region` still
+        comes through untouched, and implementations must guarantee that.
+
+        region is (left, top, right, bottom) in fractions of the image, named
+        by the person looking at the photograph. It is not derived from the
+        subject's bounding box: "the top fifth of the animal" is only the
+        neck when the animal is upright and head-up, and shelter photos are
+        as often taken from above, or of a cat lying on its back.
+
+        on_subject says how region meets the animal. True intersects it with
+        the subject's own silhouette, so a collar cannot spill onto the floor
+        beside it; False subtracts the silhouette, so a toy is placed *beside*
+        the animal rather than through it.
+
+        subject names what to segment ("cat", "dog"), as in
+        replace_background — the caller knows the species, the provider does
+        not.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} cannot add props to an image — "
+            "use a provider that implements add_prop()"
+        )
+
 
 class VLMProvider(ABC):
     """Looking at a picture and saying what is in it.
