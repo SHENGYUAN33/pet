@@ -175,6 +175,11 @@
       - **道具 prompt 的禁用詞防線**（`config.PROPS_FORBIDDEN_TERMS` ＝ 背景那份 ＋ 人體部位）：`forbidden_terms_in()` 整詞比對（`warm` 不會誤中 `arm`，而暖色光就在預設值裡）。**規則掛在 `SceneProp` 的 pydantic validator 上而不是只在 API**——只活在一個 endpoint 的規則，CLI、續跑、腳本供給的道具全都會直接繞過去。API 另外回 **422** 並**指名是哪幾個字**，那是 pydantic 錯誤給不了的。順手發現**預設的項圈 prompt 寫了「pet collar」而 `pet` 在禁用清單上**——自己的預設值過不了自己的規則，那條規則沒人會信任；已改掉，並加了一個測試釘住這個不變式。
       - **道具覆蓋率上限**（`config.PROPS_MAX_SCENE_RATIO`，預設 0.5）：超過一半的鏡頭有道具就由 `pipeline/qa.py` 回報。領養影片存在的目的是讓領養人看到**這隻動物**；每顆鏡頭都戴著牠沒有的東西，它就不再是這隻寵物的紀錄。腳本供給與審核者指定**兩個來源都算**，只算一邊會讓另一邊溜過去。
       - **CLI 仍然沒接**（`--prop-*`），刻意的：道具是人工專用功能，CLI 上沒有照片可以點。整支片一次生成（`GenerateRequest`）同樣沒接，那時候還沒有鏡頭可看。
+      - **已知品質落差與成因（已量測，尚未處理）**：`toy` 的成品明顯比 `collar` 差——出來的常是一塊模糊布而不是有形狀的玩偶。成因**不是** prompt 不夠具體，是 ControlNet 的提示圖在那個位置是空的。實測同一組 `PROPS_CANNY_LOW/HIGH` 下的邊緣密度：
+        - 項圈區（貓的頸部）**3.09%**，該圖平均 1.43% — 邊緣比平均多一倍，ControlNet 有結構可循
+        - 玩偶區（空白床單）**0.0000%**，該圖平均 2.72% — **一個邊緣像素都沒有**
+
+        所以 strength 0.35 在玩偶區不是「沒幫上忙」，是主動在告訴取樣器「這裡沒有任何結構」。修的方向是**把 strength 依 placement 拆開**（`collar` 維持 0.35；`toy` 調降或直接 0，讓 SDXL 純靠 prompt 生成結構），必要時再加形狀提示（先在遮罩內填一塊低透明度的剪影當 latent guide）。**動之前先重測這兩個數字**——它們是對這兩張照片量的，換素材會不一樣。
 
   - **給非工程使用者的表單化 UI**：Pet Profile 不再只有 JSON textarea——`webapp/static/index.html` 現在是中文欄位表單（基本資料／健康狀態勾選／個性標籤 chip 編輯器／故事與領養條件／照片影片清單含縮圖／外觀特徵摺疊區），JSON 直編退居「進階」摺疊區（可「套用到上方表單」，但仍要按表單的儲存鈕才寫入 DB）。表單會保留 schema 中沒有對應 widget 的欄位再合併回去，不會靜默丟資料。**檔案路徑欄位改成用選的**：瀏覽器拿不到本機檔案的真實路徑，所以「從電腦選擇」＝開 OS 檔案對話框→上傳到 `storage/assets/<pet_id>/`→用存下來那份的相對路徑；新增 `POST /api/pets/{pet_id}/assets`（副檔名 allowlist、檔名淨化、同名不覆蓋、pet_id 先做字元檢查＋ `storage/assets/` 包含性檢查再查 DB）、`GET /api/pets/{pet_id}/assets`（列出已上傳檔案給下拉選單）、`GET /api/profile-files`（匯入表單改成下拉選單），照片縮圖走唯讀的 `/media` static mount。單鏡頭重生的「換素材」也從手打 asset_id 改成從該寵物素材下拉選。上傳需要先有 pet_id（新寵物要先存檔才能傳照片）。
 
