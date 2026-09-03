@@ -802,3 +802,180 @@ def test_regenerate_without_an_overlay_leaves_the_script_alone(client, monkeypat
     _drain_tasks()
 
     assert seen["overlay"] is None
+
+
+def test_regenerate_rejects_a_prop_with_nowhere_to_go(client):
+    """A placement with no point paints nothing, which reads afterwards as
+    "the prop did nothing" — the same guard the animate and background
+    settings have."""
+    from tests.conftest import completed_job
+
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+    job_id = completed_job(TEST_PET_ID, script_json={"scenes": [{"scene_id": 1}]})
+
+    response = client.post(
+        f"/api/jobs/{job_id}/regenerate-scene",
+        json={"scene_id": 1, "prop_placement": "collar"},
+    )
+
+    assert response.status_code == 400
+    assert "位置" in response.json()["detail"]
+
+
+def test_regenerate_rejects_a_prop_description_with_no_placement(client):
+    from tests.conftest import completed_job
+
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+    job_id = completed_job(TEST_PET_ID, script_json={"scenes": [{"scene_id": 1}]})
+
+    response = client.post(
+        f"/api/jobs/{job_id}/regenerate-scene",
+        json={"scene_id": 1, "prop_prompt": "a red knitted collar"},
+    )
+
+    assert response.status_code == 400
+    assert "道具" in response.json()["detail"]
+
+
+def test_a_clicked_point_becomes_the_region_the_pipeline_paints(client, monkeypatch):
+    """The reviewer clicks; the box around that click is a design decision,
+    so it is made here rather than asked of them."""
+    from tests.conftest import completed_job
+    from webapp import main
+
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+    job_id = completed_job(TEST_PET_ID, script_json={"scenes": [{"scene_id": 1}]})
+
+    seen = {}
+
+    def fake_regenerate(job, scene_id, **kwargs):
+        seen.update(kwargs)
+        return "out.mp4", 999
+
+    monkeypatch.setattr(main, "regenerate_scene", fake_regenerate)
+
+    response = client.post(
+        f"/api/jobs/{job_id}/regenerate-scene",
+        json={"scene_id": 1, "prop_placement": "collar", "prop_point": [0.5, 0.5]},
+    )
+    assert response.status_code == 202
+    _drain_tasks()
+
+    props = seen["props"]
+    assert len(props) == 1
+    assert props[0].placement.value == "collar"
+    left, top, right, bottom = props[0].region
+    assert left < 0.5 < right and top < 0.5 < bottom
+
+
+def test_a_shot_with_no_prop_leaves_the_picture_alone(client, monkeypatch):
+    from tests.conftest import completed_job
+    from webapp import main
+
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+    job_id = completed_job(TEST_PET_ID, script_json={"scenes": [{"scene_id": 1}]})
+
+    seen = {}
+
+    def fake_regenerate(job, scene_id, **kwargs):
+        seen.update(kwargs)
+        return "out.mp4", 999
+
+    monkeypatch.setattr(main, "regenerate_scene", fake_regenerate)
+
+    response = client.post(f"/api/jobs/{job_id}/regenerate-scene", json={"scene_id": 1})
+    assert response.status_code == 202
+    _drain_tasks()
+
+    assert seen["props"] == []
+
+
+def test_the_scene_source_endpoint_refuses_a_non_photo_shot(client):
+    """photo=false is a real answer: the UI needs to say why rather than
+    offer a control that would be ignored."""
+    from tests.conftest import completed_job
+
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+    job_id = completed_job(
+        TEST_PET_ID,
+        script_json={"scenes": [{"scene_id": 1, "visual_source": "does-not-exist"}]},
+    )
+
+    body = client.get(f"/api/jobs/{job_id}/scenes/1/source").json()
+
+    assert body["photo"] is False
+    assert body["reason"]
+
+
+def test_a_prop_prompt_asking_for_a_human_hand_is_refused(client):
+    """422, not 400: the request is well-formed, its content is not
+    allowable. Refused before anything reaches ComfyUI."""
+    from tests.conftest import completed_job
+
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+    job_id = completed_job(TEST_PET_ID, script_json={"scenes": [{"scene_id": 1}]})
+
+    response = client.post(
+        f"/api/jobs/{job_id}/regenerate-scene",
+        json={
+            "scene_id": 1,
+            "prop_placement": "collar",
+            "prop_point": [0.5, 0.5],
+            "prop_prompt": "a human hand gently petting the cat",
+        },
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    # It has to say which words, not merely that something was wrong.
+    assert "hand" in detail and "human" in detail
+
+
+def test_a_prop_prompt_asking_for_another_animal_is_refused(client):
+    from tests.conftest import completed_job
+
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+    job_id = completed_job(TEST_PET_ID, script_json={"scenes": [{"scene_id": 1}]})
+
+    response = client.post(
+        f"/api/jobs/{job_id}/regenerate-scene",
+        json={
+            "scene_id": 1,
+            "prop_placement": "toy",
+            "prop_point": [0.5, 0.5],
+            "prop_prompt": "a plush mouse and another puppy beside it",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "puppy" in response.json()["detail"]
+
+
+def test_an_ordinary_prop_prompt_is_accepted(client, monkeypatch):
+    from tests.conftest import completed_job
+    from webapp import main
+
+    client.put(f"/api/pets/{TEST_PET_ID}/profile", json=_sample_profile_json())
+    job_id = completed_job(TEST_PET_ID, script_json={"scenes": [{"scene_id": 1}]})
+
+    seen = {}
+
+    def fake_regenerate(job, scene_id, **kwargs):
+        seen.update(kwargs)
+        return "out.mp4", 999
+
+    monkeypatch.setattr(main, "regenerate_scene", fake_regenerate)
+
+    response = client.post(
+        f"/api/jobs/{job_id}/regenerate-scene",
+        json={
+            "scene_id": 1,
+            "prop_placement": "collar",
+            "prop_point": [0.5, 0.5],
+            "prop_prompt": "a soft red knitted collar, warm indoor lighting",
+        },
+    )
+
+    assert response.status_code == 202
+    _drain_tasks()
+    assert seen["props"][0].prompt == "a soft red knitted collar, warm indoor lighting"

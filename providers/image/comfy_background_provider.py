@@ -879,6 +879,12 @@ class ComfyBackgroundProvider(ImageEditingProvider):
         return self.client.fetch_output(entry["outputs"][P_SAVE]["images"][0], output_path)
 
     def preflight(self, *, mode: str = "extend") -> None:
+        if mode == "props":
+            # Its own set of requirements, so it gets its own check rather
+            # than a third branch inside this one.
+            self.preflight_props()
+            return
+
         self.client.ping()
 
         checkpoints = self.client.node_options("CheckpointLoaderSimple", "ckpt_name")

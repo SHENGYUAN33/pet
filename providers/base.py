@@ -90,10 +90,11 @@ class ImageEditingProvider(ABC):
         the first call, with a no-op default for providers that can't
         usefully tell in advance.
 
-        mode says which treatment is coming ("extend" or "replace"), because
-        they need different things installed — checking for a matting model
-        an extend-only run will never load would refuse work that would have
-        succeeded.
+        mode says which treatment is coming ("extend", "replace" or
+        "props"), because they need different things installed — checking for
+        a matting model an extend-only run will never load would refuse work
+        that would have succeeded, and props additionally need a ControlNet
+        neither background treatment loads.
         """
 
     @abstractmethod

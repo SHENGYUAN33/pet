@@ -3,15 +3,22 @@ from __future__ import annotations
 from pipeline import config
 from pipeline.background import BackgroundMode
 from pipeline.overlay_renderer import REQUIRED_FIELDS, OverlayTemplate
+from pipeline.props import prop_specs_from_job
 
 
-def validate_script_structure(script: dict) -> list[str]:
+def validate_script_structure(script: dict, prop_specs: dict | None = None) -> list[str]:
     """Lightweight structural QA stand-in (docs/architecture.md §11 影音品質
     檢查, not the full weighted-score QA Agent): catches format violations
     that would silently break the editing pipeline (gaps/overlaps make the
     concatenated video shorter or longer than the declared duration) or the
     platform-compliance requirement that subtitles always be present —
     independent of narrative content quality, which this does not judge.
+
+    prop_specs is the run's per-scene props (pipeline/props.py). Passed in
+    rather than read off the script, because a prop is a reviewer's decision
+    about one photograph and lives on the job row, not in the script — but it
+    still has to be counted here, since "how much of this video is real" is a
+    question about the whole film.
     """
     issues: list[str] = []
     scenes = script.get("scenes", [])
@@ -63,6 +70,20 @@ def validate_script_structure(script: dict) -> list[str]:
         issues.append(
             "scenes " + ", ".join(str(i) for i in crowded) + " all carry an overlay panel "
             "— the panels stop reading as emphasis and start covering the pet"
+        )
+
+    dressed = _prop_scene_ids(scenes, prop_specs)
+    if scenes and len(dressed) > len(scenes) * config.PROPS_MAX_SCENE_RATIO:
+        # An adoption video exists to show an adopter this animal. Every shot
+        # wearing something it does not own stops being a record of the pet
+        # and becomes a costume shoot — and the adopter is deciding, from
+        # these frames, what they would be taking home.
+        issues.append(
+            "scenes "
+            + ", ".join(str(i) for i in dressed)
+            + " carry generated props — over "
+            + f"{config.PROPS_MAX_SCENE_RATIO:.0%} of the video, so an adopter would be judging "
+            "this animal largely on things it does not actually have"
         )
 
     if scenes and all(_replaces_its_setting(scene) for scene in scenes):
@@ -186,3 +207,21 @@ def _overlay_issues(scene: dict, scene_id) -> list[str]:
             f"{' / '.join(required)} empty — the panel was dropped"
         )
     ]
+
+
+def _prop_scene_ids(scenes: list[dict], prop_specs: dict | None) -> list[int]:
+    """scene_ids wearing at least one generated prop, from either source.
+
+    Two sources because there are two: the reviewer's own placements, stored
+    on the job row, and a script's `props` block for the rare setup where
+    config.PROPS_ALLOW_SCRIPT is on. Counting only one of them would let the
+    other slip past the ratio.
+    """
+    from_job = set(prop_specs_from_job({"prop_specs": prop_specs}))
+    from_script = {
+        scene.get("scene_id")
+        for scene in scenes
+        if isinstance(scene.get("props"), list) and scene["props"]
+    }
+    known = {scene.get("scene_id") for scene in scenes}
+    return sorted((from_job | from_script) & known)

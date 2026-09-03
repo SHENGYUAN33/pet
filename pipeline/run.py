@@ -24,6 +24,7 @@ from pipeline.pet_repo import (
 )
 from pipeline.profile import PetProfile
 from pipeline.progress import ProgressCallback, noop, scaled
+from pipeline.props import SceneProp, prop_specs_from_job, prop_specs_to_job
 from pipeline.qa import validate_script_structure
 from pipeline.rendering import render_script
 from pipeline.scene_tracking import DatabaseSceneTracker
@@ -45,6 +46,7 @@ def generate_video(
     background_mode: BackgroundMode = BackgroundMode.EXTEND,
     image_provider: str = "comfy",
     background_prompt: str | None = None,
+    prop_specs: dict[int, list[SceneProp]] | None = None,
     accent_colour: str | None = None,
     border_width: int | None = None,
     recap_unused_assets: bool = False,
@@ -94,6 +96,10 @@ def generate_video(
         background_mode=background_mode.value,
         image_provider=image_provider,
         background_prompt=background_prompt,
+        # Keys are strings because this is stored as JSONB and read back from
+        # it; JSON object keys are always strings, and pretending otherwise
+        # only means the round-trip changes the value.
+        prop_specs=prop_specs_to_job(prop_specs),
         decor_accent=accent_colour,
         decor_border_width=border_width,
     )
@@ -112,6 +118,7 @@ def generate_video(
             background_mode=background_mode,
             image_provider=image_provider,
             background_prompt=background_prompt,
+            prop_specs=prop_specs,
             accent_colour=accent_colour,
             border_width=border_width,
             recap_unused_assets=recap_unused_assets,
@@ -139,6 +146,7 @@ def _run_generation(
     background_mode: BackgroundMode,
     image_provider: str,
     background_prompt: str | None,
+    prop_specs: dict[int, list[SceneProp]] | None,
     accent_colour: str | None,
     border_width: int | None,
     recap_unused_assets: bool,
@@ -187,7 +195,7 @@ def _run_generation(
         for claim in unsupported:
             print(f"[WARNING] style={name!r} 影片說了資料裡沒有的事：{claim}")
 
-        structure_issues = validate_script_structure(s)
+        structure_issues = validate_script_structure(s, prop_specs=prop_specs_to_job(prop_specs))
         s["_structure_check"] = {"issues": structure_issues}
         if structure_issues:
             print(f"[WARNING] style={name!r} has structural issues: {structure_issues}")
@@ -238,6 +246,7 @@ def _run_generation(
         background_mode=background_mode,
         image_provider=image_provider,
         background_prompt=background_prompt,
+        prop_specs=prop_specs,
         accent_colour=accent_colour,
         border_width=border_width,
         on_progress=scaled(on_progress, 0.35, 0.98),
@@ -302,6 +311,7 @@ def resume_generation_job(
             background_mode=BackgroundMode(job["background_mode"] or BackgroundMode.EXTEND),
             image_provider=job["image_provider"] or "comfy",
             background_prompt=job["background_prompt"],
+            prop_specs=prop_specs_from_job(job),
             accent_colour=job["decor_accent"],
             border_width=job["decor_border_width"],
             on_progress=scaled(on_progress, 0.05, 0.98),

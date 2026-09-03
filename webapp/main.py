@@ -27,6 +27,7 @@ import subprocess
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
@@ -53,7 +54,9 @@ from pipeline.pet_repo import (
 from pipeline.planning import ScenePlan, plan_scenes
 from pipeline.profile import PetProfile
 from pipeline.progress import ProgressCallback
+from pipeline.props import PropPlacement, SceneProp, forbidden_terms_in, region_around
 from pipeline.regen import regenerate_scene
+from pipeline.rendering import _is_single_photo, _resolve_scene_visuals
 from pipeline.review import publication_blockers
 from pipeline.run import generate_video, resume_generation_job
 from webapp import tasks
@@ -275,6 +278,34 @@ class RegenerateSceneRequest(BaseModel):
     #: the fields belong to a template — and because a set of strings can
     #: only ever say "leave it alone", never "remove it".
     overlay: SceneOverlaySpec | None = None
+    #: A generated object painted onto this shot. None leaves the picture
+    #: alone, which is the normal state.
+    #:
+    #: Taken as a point rather than a rectangle because that is what the
+    #: reviewer actually does — clicks where the collar goes — and the box
+    #: around it is a design decision (its shape differs per placement), not
+    #: something to ask a person to drag accurately. prop_region is here for
+    #: a caller that genuinely has a box; the point wins when both are given,
+    #: since a click is the more deliberate of the two.
+    prop_placement: PropPlacement | None = None
+    prop_point: tuple[float, float] | None = None
+    prop_region: tuple[float, float, float, float] | None = None
+    prop_prompt: str | None = None
+
+    def resolved_props(self) -> list[SceneProp]:
+        """The prop list to paint, or empty."""
+        if self.prop_placement is None:
+            return []
+        region = (
+            region_around(self.prop_point, self.prop_placement)
+            if self.prop_point is not None
+            else self.prop_region
+        )
+        if region is None:
+            return []
+        return [
+            SceneProp(placement=self.prop_placement, region=region, prompt=self.prop_prompt or None)
+        ]
 
 
 @app.get("/api/pets/{pet_id}/decor-preview")
@@ -460,6 +491,35 @@ def api_regenerate_scene(job_id: int, req: RegenerateSceneRequest):
             status_code=400,
             detail="填了背景描述，但沒有啟用背景生成 — 勾選「重新生成背景」，否則這顆鏡頭會照原本的畫面渲染",
         )
+    # A placement with nowhere to put it paints nothing, and a description
+    # with no placement is discarded — both read afterwards as "the prop did
+    # nothing", which is what the animate and background guards above exist
+    # to prevent.
+    if req.prop_placement is not None and req.prop_point is None and req.prop_region is None:
+        raise HTTPException(
+            status_code=400,
+            detail="選了道具，但沒有指定要畫在哪裡 — 請在預覽圖上點一下位置",
+        )
+    # Refused before anything reaches ComfyUI, and 422 rather than 400: the
+    # request is well-formed, its content is not allowable. The model refuses
+    # this too (pipeline/props.py) — this layer exists to say *which* words
+    # and why, which a pydantic error would not.
+    forbidden = forbidden_terms_in(req.prop_prompt)
+    if forbidden:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "道具描述不可以出現：" + "、".join(forbidden) + " — 畫面裡出現人（或人的手）"
+                "等於宣稱這隻動物可以被陌生人觸摸，出現其他動物等於憑空多一隻，"
+                "兩者這隻寵物的資料都沒有說過。請只描述那件物品本身。"
+            ),
+        )
+    if req.prop_prompt and req.prop_placement is None:
+        raise HTTPException(
+            status_code=400,
+            detail="填了道具描述，但沒有選道具種類 — 選「項圈」或「身旁玩偶」，否則這段描述不會有作用",
+        )
+
     # Same class of contradiction once more: copy typed into a panel whose
     # template does not render it is thrown away, and afterwards reads as
     # "the overlay did nothing" rather than as the mismatch it is.
@@ -484,6 +544,7 @@ def api_regenerate_scene(job_id: int, req: RegenerateSceneRequest):
             subtitle=req.subtitle,
             narration=req.narration,
             overlay=req.overlay,
+            props=req.resolved_props(),
             voice_sample=req.voice_sample,
             music_track=req.music_track,
             animate=req.animate,
@@ -505,6 +566,56 @@ def api_regenerate_scene(job_id: int, req: RegenerateSceneRequest):
         label=f"重生 Job {job_id} 的鏡頭 {req.scene_id}",
         work=work,
     )
+
+
+@app.get("/api/jobs/{job_id}/scenes/{scene_id}/source")
+def api_scene_source(job_id: int, scene_id: int):
+    """Where this shot's picture is, so a reviewer can click a spot on it.
+
+    Placing a prop means naming a point on one particular photograph, and the
+    browser has no way to turn the script's `visual_source` — an asset id, or
+    a bare filename — into something it can display. Resolved here because
+    that mapping already lives on this side (pipeline/rendering.py), and a
+    second copy of it in JavaScript would be one to keep in sync.
+
+    photo=false is a real answer, not an error: real footage and the closing
+    recap cannot carry a prop, so the UI needs to say so rather than offer a
+    control that would be ignored.
+    """
+    job = get_generation_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"No generation job found with id {job_id}")
+
+    profile = get_pet(job["pet_id"])
+    if profile is None:
+        raise HTTPException(status_code=404, detail=f"No pet found with id {job['pet_id']!r}")
+
+    scene = next(
+        (s for s in (job["script_json"] or {}).get("scenes", []) if s.get("scene_id") == scene_id),
+        None,
+    )
+    if scene is None:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} has no scene {scene_id}")
+
+    try:
+        paths = _resolve_scene_visuals(profile, scene)
+    except Exception:  # noqa: BLE001 - boundary: a script naming a missing asset
+        return {"photo": False, "url": None, "reason": "找不到這個鏡頭的素材"}
+
+    if not _is_single_photo(paths):
+        return {
+            "photo": False,
+            "url": None,
+            # Which of the two it is matters to the reviewer: one is a
+            # limitation of the feature, the other is a choice they made.
+            "reason": "這個鏡頭是影片或多張素材，不能加道具",
+        }
+
+    return {
+        "photo": True,
+        "url": f"/media/{quote(job['pet_id'])}/{quote(paths[0].name)}",
+        "reason": None,
+    }
 
 
 @app.post("/api/jobs/{job_id}/resume", status_code=202)

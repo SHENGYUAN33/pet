@@ -28,6 +28,7 @@ from pipeline.narration import silence_scenes, synthesize_scenes
 from pipeline.overlay_renderer import render_scene_overlay, resolve_scene_overlay
 from pipeline.profile import PetProfile
 from pipeline.progress import ProgressCallback, noop
+from pipeline.props import SceneProp, apply_props, resolve_scene_props
 from pipeline.scene_tracking import NoopSceneTracker, SceneTracker
 from providers.tts.xtts_provider import XTTSProvider
 
@@ -70,6 +71,27 @@ def _is_single_photo(visual_paths: list[Path]) -> bool:
     return len(visual_paths) == 1 and visual_paths[0].suffix.lower() in PHOTO_EXTENSIONS
 
 
+def _disclosure_notice(background: SceneBackground | None, props: list[SceneProp]) -> str | None:
+    """The AI-generation label a shot has to carry, or None.
+
+    Two things can earn one and they say different things, so a shot that
+    did both carries both, joined. "部分畫面由 AI 創意生成" tells a viewer
+    the surroundings are invented; it does not tell them the animal is
+    wearing something it has never worn, and picking one label would drop
+    whichever fact the other one carried.
+
+    EXTEND earns nothing: nothing the camera saw is replaced there, and
+    labelling a filled-in margin would wear the label out where it
+    actually matters.
+    """
+    notices = []
+    if background is not None and background.mode is BackgroundMode.REPLACE:
+        notices.append(config.BACKGROUND_DISCLOSURE_TEXT)
+    if props:
+        notices.append(config.PROPS_DISCLOSURE_TEXT)
+    return config.DISCLOSURE_JOINER.join(notices) or None
+
+
 def render_script(
     profile: PetProfile,
     script: dict,
@@ -84,6 +106,7 @@ def render_script(
     background_mode: BackgroundMode = BackgroundMode.EXTEND,
     image_provider: str = "comfy",
     background_prompt: str | None = None,
+    prop_specs: dict[int, list[SceneProp]] | None = None,
     accent_colour: str | None = None,
     border_width: int | None = None,
     on_progress: ProgressCallback = noop,
@@ -133,6 +156,15 @@ def render_script(
     strategy C) — an invented setting has to be visible as one, and doing it
     here rather than leaving it to the caller means it cannot be forgotten.
 
+    prop_specs (pipeline/props.py) maps scene_id to the objects painted onto
+    that shot — a collar on the animal, a toy beside it. Keyed per scene
+    rather than shared like animate_prompt, because a prop's region is a
+    place on one particular photograph and means nothing on another. Applied
+    *before* the background, so a shot doing both has its margins filled
+    around the prop rather than the prop painted onto an already-extended
+    canvas; and like REPLACE it burns the AI-generation disclosure, because
+    this is the one edit here that alters the animal itself.
+
     on_progress reports which stage is running (see pipeline/progress.py);
     the CLI leaves it at the no-op default, the web UI uses it to drive a
     progress bar instead of a blank spinner.
@@ -160,6 +192,14 @@ def render_script(
         for scene in script["scenes"]
     }
 
+    # Same reasoning as the backgrounds above: settled once so the preflight
+    # and the render loop cannot disagree about which shots get a prop.
+    prop_specs = prop_specs or {}
+    scene_props = {
+        scene["scene_id"]: resolve_scene_props(scene, override=prop_specs.get(scene["scene_id"]))
+        for scene in script["scenes"]
+    }
+
     # Which scenes a resumed run can skip, decided once so the check below and
     # the render loop agree on it.
     reusable_clips = {
@@ -171,6 +211,7 @@ def render_script(
     # whose clip is being reused aren't checked — their source may legitimately
     # have been removed since that clip was produced.
     will_animate = False
+    will_add_props = False
     background_modes: set[BackgroundMode] = set()
     for scene in script["scenes"]:
         if reusable_clips[scene["scene_id"]] is not None:
@@ -180,6 +221,8 @@ def render_script(
             continue
         if scene["scene_id"] in animate_scenes:
             will_animate = True
+        if scene_props[scene["scene_id"]]:
+            will_add_props = True
         background = backgrounds[scene["scene_id"]]
         if background is not None:
             background_modes.add(background.mode)
@@ -193,9 +236,13 @@ def render_script(
     if will_animate:
         on_progress(f"檢查 {video_provider} 影片生成服務", 0.0)
         get_video_provider(video_provider).preflight()
-    if background_modes:
-        on_progress(f"檢查 {image_provider} 背景生成服務", 0.0)
+    if background_modes or will_add_props:
+        on_progress(f"檢查 {image_provider} 影像生成服務", 0.0)
         provider = get_image_provider(image_provider)
+        if will_add_props:
+            # Props need a ControlNet neither background treatment loads, so
+            # it is checked separately rather than folded into the loop below.
+            provider.preflight(mode="props")
         # Checked per mode actually used, because the two treatments need
         # different models installed: demanding the matting weights for a run
         # that only fills margins would refuse work that would have succeeded.
@@ -257,16 +304,8 @@ def render_script(
         for issue in result.issues:
             print(f"[WARNING] 鏡頭 {scene_id}：{issue}")
 
-    def disclosure_for(background: SceneBackground | None) -> str | None:
-        """The AI-generation label a shot has to carry, or None.
-
-        Only a replaced setting earns it: with EXTEND nothing the camera saw
-        is replaced, and labelling a filled-in margin would wear the label
-        out where it actually matters.
-        """
-        if background is not None and background.mode is BackgroundMode.REPLACE:
-            return config.BACKGROUND_DISCLOSURE_TEXT
-        return None
+    def disclosure_for(background: SceneBackground | None, props: list[SceneProp]) -> str | None:
+        return _disclosure_notice(background, props)
 
     # The look this video is dressed in, decided once from the script's own
     # style. None when decoration is switched off, which build_scene_clip
@@ -332,10 +371,16 @@ def render_script(
         single_photo = _is_single_photo(visual_paths)
         animated = scene_id in animate_scenes and single_photo
         background = backgrounds[scene_id] if single_photo else None
+        # Real footage and the recap montage are several sources or a moving
+        # one; a prop painted into one frame of either would appear for a
+        # single frame. Same condition the background treatments use.
+        props = scene_props[scene_id] if single_photo else []
         # Named after the step that runs *first*, since a scene doing both
         # spends its opening minutes on the background; the animation step
         # re-reports itself when it takes over.
-        if background is not None:
+        if props:
+            step = f"：{image_provider} {props[0].placement.label}生成中"
+        elif background is not None:
             step = f"：{image_provider} {background.mode.label}背景生成中"
         elif animated:
             step = f"：{video_provider} 動態化中（比較久）"
@@ -351,6 +396,7 @@ def render_script(
             image_provider=image_provider if background else None,
             background_mode=background.mode.value if background else None,
             background_prompt=background.prompt if background else None,
+            props=[prop.model_dump(mode="json") for prop in props] or None,
         )
         clip_path = work_dir / f"scene_{scene_id}.mp4"
         try:
@@ -366,6 +412,35 @@ def render_script(
                 )
             else:
                 visual_path = visual_paths[0]
+                if props:
+                    # Cached under work_dir for the same reason the background
+                    # is: a resumed run that died later in this scene should
+                    # not pay for the sampling again, and reusing the exact
+                    # file keeps the retry visually identical to the attempt
+                    # it continues.
+                    prop_path = work_dir / f"scene_{scene_id}_prop.png"
+                    if prop_path.exists():
+                        visual_path = prop_path
+                    else:
+                        visual_path = Path(
+                            apply_props(
+                                str(visual_path),
+                                load_background_provider(),
+                                props=props,
+                                output_path=str(prop_path),
+                                # The profile knows what animal this is and the
+                                # provider does not; the prop has to be placed
+                                # against the right silhouette.
+                                subject=profile.species,
+                            )
+                        )
+                    if background is not None:
+                        on_progress(
+                            f"鏡頭 {index + 1}/{scene_count}"
+                            f"：{image_provider} {background.mode.label}背景生成中",
+                            scene_fraction,
+                        )
+
                 if background is not None:
                     # Cached under work_dir rather than regenerated: a resumed
                     # run that died during this scene's animation should not
@@ -412,7 +487,7 @@ def render_script(
                 # Only shots whose picture was generated: a Ken Burns pass
                 # over a photograph is the photograph, and there is nothing
                 # for identity to drift from.
-                if background is not None or animated:
+                if background is not None or animated or props:
                     verify_identity(scene_id, str(visual_path))
 
                 build_scene_clip(
@@ -420,7 +495,7 @@ def render_script(
                     duration=duration,
                     subtitle_text=scene["subtitle"],
                     output_path=str(clip_path),
-                    disclosure_text=disclosure_for(background),
+                    disclosure_text=disclosure_for(background, props),
                     accent_colour=resolved_accent,
                     border_width=border_width,
                     info_card_text=info_card_text if scene_id == first_scene_id else None,

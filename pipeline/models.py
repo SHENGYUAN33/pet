@@ -104,6 +104,14 @@ class GenerationJob(Base):
     # video with blurred bars on the scenes it had not reached yet, next to
     # generated surroundings on the ones it had.
     background_scenes: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Props, keyed by scene_id: {"3": [{"placement": "collar", "region": [...]}]}.
+    # A mapping rather than a list of scene ids like background_scenes above,
+    # because a prop's region is a place on one particular photograph — there
+    # is no single setting that could apply to every named scene the way
+    # background_mode does. Resume and single-shot regeneration read the run's
+    # settings back from here, so this is what makes a continued run finish
+    # the same video rather than a subtly different one.
+    prop_specs: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     background_mode: Mapped[str | None] = mapped_column(String, nullable=True)
     image_provider: Mapped[str | None] = mapped_column(String, nullable=True)
     background_prompt: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -190,6 +198,15 @@ class SceneJob(Base):
     image_provider: Mapped[str | None] = mapped_column(String, nullable=True)
     background_mode: Mapped[str | None] = mapped_column(String, nullable=True)
     background_prompt: Mapped[str | None] = mapped_column(String, nullable=True)
+    # The objects painted onto this shot (pipeline/props.py): placement,
+    # region, prompt. A list rather than columns because a shot may wear a
+    # collar *and* have a toy beside it, and each carries its own rectangle.
+    # NULL for the shots that got none, which is nearly all of them.
+    #
+    # This is the record that matters most here: a prop is the one edit in
+    # the pipeline that alters the animal itself, so "what was added, and
+    # where" has to survive the run that added it.
+    props: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     # What a vision model saw in this shot's generated picture
     # (pipeline/identity.py). NULL for the shots that were never generated —
     # a Ken Burns pass over a photograph is the photograph, so there is

@@ -695,7 +695,10 @@ PROPS_MASK_GROW = int(os.getenv("PROPS_MASK_GROW", "4"))
 # describing different things.
 PROPS_COLLAR_PROMPT = os.getenv(
     "PROPS_COLLAR_PROMPT",
-    "photorealistic, a cute soft knitted pet collar around the neck, small "
+    # No "pet collar": the word is on PROPS_FORBIDDEN_TERMS, and a default
+    # that its own rule would reject is a rule nobody can trust. Dropping it
+    # costs nothing — the collar is the object being described either way.
+    "photorealistic, a cute soft knitted collar around the neck, small "
     "fabric texture, natural indoor lighting, sharp focus, highly detailed",
 )
 PROPS_TOY_PROMPT = os.getenv(
@@ -713,10 +716,18 @@ PROPS_NEGATIVE_PROMPT = os.getenv(
     "fingers, arm, face, distorted paws, bad anatomy, deformed, extra limbs, "
     "text, watermark, signature, logo, blurry, lowres",
 )
-# Burned onto any shot wearing a generated prop. The same label a replaced
-# setting carries, and for a stronger reason: this one is painted on the
-# animal itself.
-PROPS_DISCLOSURE_TEXT = os.getenv("PROPS_DISCLOSURE_TEXT", "部分畫面由 AI 創意生成")
+# Burned onto any shot wearing a generated prop, for a stronger reason than a
+# replaced setting carries one: this is painted on the animal itself.
+#
+# Worded separately from BACKGROUND_DISCLOSURE_TEXT rather than reusing it,
+# and the two are joined when both apply. "部分畫面由 AI 創意生成" says the
+# surroundings are invented; it does not say the animal is wearing something
+# it has never worn, and that is the part a viewer would be most surprised to
+# learn afterwards.
+PROPS_DISCLOSURE_TEXT = os.getenv("PROPS_DISCLOSURE_TEXT", "含 AI 道具裝飾")
+#: Between two labels on one line. A middle dot rather than a comma: this is
+#: a list of two notices, not a sentence.
+DISCLOSURE_JOINER = os.getenv("DISCLOSURE_JOINER", "・")
 # Smallest share of the frame the subject mask may cover before a prop run is
 # refused. Same guard, same reasoning as BACKGROUND_MIN_SUBJECT_COVERAGE: if
 # SAM3 cannot find the animal, the region the reviewer named is not on any
@@ -726,3 +737,44 @@ PROPS_DISCLOSURE_TEXT = os.getenv("PROPS_DISCLOSURE_TEXT", "部分畫面由 AI �
 # time, which meant 50%% and refused a photo where SAM3 had found the cat
 # perfectly well at 27%%.
 PROPS_MIN_SUBJECT_COVERAGE = float(os.getenv("PROPS_MIN_SUBJECT_COVERAGE", "0.005"))
+
+# Words a prop description may not contain, checked before anything reaches
+# ComfyUI (pipeline/props.py forbidden_terms_in).
+#
+# BACKGROUND_FORBIDDEN_TERMS plus the body parts, because the two prompts are
+# describing different things and a prop prompt can go wrong in a way a
+# background prompt cannot: it is painted *on the animal*, so "a hand gently
+# holding the cat" would put a person in contact with a real adoptable pet.
+# That is a claim the Profile never made — the same reason the background list
+# exists — and the prop mask makes it more convincing, not less.
+#
+# The live-animal half is here for the other reason the background list has
+# it: naming an animal makes the model paint one, and a toy region that sits
+# *beside* the pet is exactly where a second cat would appear.
+#
+# Checked as whole words, so "cat" does not fire on "delicate" and "arm" does
+# not fire on "warm" — that last one matters, since warm lighting is in the
+# shipped defaults.
+PROPS_FORBIDDEN_TERMS = tuple(
+    dict.fromkeys(
+        BACKGROUND_FORBIDDEN_TERMS
+        + tuple(
+            term.strip()
+            for term in os.getenv(
+                "PROPS_EXTRA_FORBIDDEN_TERMS",
+                "hand,finger,fingers,arm,arms,wrist,palm,skin,body,person's,human's,"
+                "puppy,puppies,kittens,creature,fur",
+            ).split(",")
+            if term.strip()
+        )
+    )
+)
+# Share of a video's shots that may carry a generated prop before
+# pipeline/qa.py says so.
+#
+# An adoption video exists to show an adopter this animal. Every shot wearing
+# something it does not own stops being a record of the pet and becomes a
+# costume shoot — and the adopter is deciding, from these frames, what they
+# would be taking home. Half is generous; the point is that the plain shots
+# have to outnumber the dressed ones.
+PROPS_MAX_SCENE_RATIO = float(os.getenv("PROPS_MAX_SCENE_RATIO", "0.5"))

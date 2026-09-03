@@ -36,6 +36,7 @@ class SceneTracker(Protocol):
         image_provider: str | None,
         background_mode: str | None,
         background_prompt: str | None,
+        props: list[dict] | None = None,
     ) -> None: ...
 
     def record_identity(self, scene_id: int, identity_check: dict) -> None:
@@ -63,6 +64,7 @@ class NoopSceneTracker:
         image_provider: str | None,
         background_mode: str | None,
         background_prompt: str | None,
+        props: list[dict] | None = None,
     ) -> None: ...
 
     def record_identity(self, scene_id: int, identity_check: dict) -> None: ...
@@ -103,6 +105,7 @@ class DatabaseSceneTracker:
         image_provider: str | None,
         background_mode: str | None,
         background_prompt: str | None,
+        props: list[dict] | None = None,
     ) -> None:
         pet_repo.start_scene_job(
             self.job_id,
@@ -113,6 +116,7 @@ class DatabaseSceneTracker:
             image_provider=image_provider,
             background_mode=background_mode,
             background_prompt=background_prompt,
+            props=props,
         )
 
     def record_identity(self, scene_id: int, identity_check: dict) -> None:

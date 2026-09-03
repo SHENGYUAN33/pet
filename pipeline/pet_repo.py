@@ -65,6 +65,7 @@ def start_generation_job(
     background_mode: str | None = None,
     image_provider: str | None = None,
     background_prompt: str | None = None,
+    prop_specs: dict | None = None,
     decor_accent: str | None = None,
     decor_border_width: int | None = None,
 ) -> int:
@@ -89,6 +90,7 @@ def start_generation_job(
             background_mode=background_mode,
             image_provider=image_provider,
             background_prompt=background_prompt,
+            prop_specs=prop_specs or None,
             decor_accent=decor_accent,
             decor_border_width=decor_border_width,
             disclosure_missing={
@@ -185,6 +187,7 @@ def get_generation_job(job_id: int) -> dict | None:
             "background_mode": row.background_mode,
             "image_provider": row.image_provider,
             "background_prompt": row.background_prompt,
+            "prop_specs": row.prop_specs,
             "decor_accent": row.decor_accent,
             "decor_border_width": row.decor_border_width,
             "script_json": row.script_json,
@@ -243,6 +246,7 @@ def start_scene_job(
     image_provider: str | None = None,
     background_mode: str | None = None,
     background_prompt: str | None = None,
+    props: list[dict] | None = None,
 ) -> None:
     """Open (or reopen, on a retry) the row for one scene of a run.
 
@@ -264,6 +268,7 @@ def start_scene_job(
                     image_provider=image_provider,
                     background_mode=background_mode,
                     background_prompt=background_prompt,
+                    props=props,
                 )
             )
             return
@@ -275,6 +280,7 @@ def start_scene_job(
         scene.image_provider = image_provider
         scene.background_mode = background_mode
         scene.background_prompt = background_prompt
+        scene.props = props
         # A retry is a new picture, so last attempt's verdict no longer
         # describes anything that exists.
         scene.identity_check = None
@@ -343,6 +349,7 @@ def list_scene_jobs(job_id: int) -> list[dict]:
                 "image_provider": row.image_provider,
                 "background_mode": row.background_mode,
                 "background_prompt": row.background_prompt,
+                "props": row.props,
                 "identity_check": row.identity_check,
                 "clip_path": row.clip_path,
                 "error": row.error,

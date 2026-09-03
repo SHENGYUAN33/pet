@@ -237,3 +237,225 @@ def test_intermediate_passes_leave_their_own_files():
 
     assert provider.calls[0]["output_path"] != "out.png"
     assert provider.calls[1]["output_path"] == "out.png"
+
+
+# --- disclosure -------------------------------------------------------------
+
+
+def test_a_propped_shot_is_disclosed_even_with_an_untouched_background():
+    """A prop is the one edit here that alters the animal, so it earns the
+    label on its own — not only when a background happened to be replaced."""
+    from pipeline.rendering import _disclosure_notice
+
+    notice = _disclosure_notice(
+        None, [SceneProp(placement=PropPlacement.COLLAR, region=(0.3, 0.4, 0.7, 0.5))]
+    )
+
+    assert notice == config.PROPS_DISCLOSURE_TEXT
+
+
+def test_a_plain_shot_carries_no_label():
+    from pipeline.rendering import _disclosure_notice
+
+    assert _disclosure_notice(None, []) is None
+
+
+def test_an_extended_background_still_earns_nothing():
+    """Nothing the camera saw is replaced there, and labelling a filled-in
+    margin wears the label out where it matters."""
+    from pipeline.background import BackgroundMode, SceneBackground
+    from pipeline.rendering import _disclosure_notice
+
+    assert _disclosure_notice(SceneBackground(mode=BackgroundMode.EXTEND), []) is None
+
+
+def test_both_notices_appear_when_both_apply():
+    """Picking one would drop whichever fact the other carried: the setting
+    being invented and the animal wearing something it never wore are two
+    different things to disclose."""
+    from pipeline.background import BackgroundMode, SceneBackground
+    from pipeline.rendering import _disclosure_notice
+
+    notice = _disclosure_notice(
+        SceneBackground(mode=BackgroundMode.REPLACE),
+        [SceneProp(placement=PropPlacement.TOY, region=(0.1, 0.7, 0.3, 0.9))],
+    )
+
+    assert config.BACKGROUND_DISCLOSURE_TEXT in notice
+    assert config.PROPS_DISCLOSURE_TEXT in notice
+
+
+# --- surviving a resume -----------------------------------------------------
+
+
+def test_prop_settings_round_trip_through_a_job_row():
+    """Resuming has to finish the video that was being made; a shot that
+    quietly lost its collar halfway through is a different video."""
+    from pipeline.props import prop_specs_from_job
+
+    original = {3: [SceneProp(placement=PropPlacement.COLLAR, region=(0.3, 0.4, 0.7, 0.5))]}
+    stored = {
+        str(scene_id): [prop.model_dump(mode="json") for prop in props]
+        for scene_id, props in original.items()
+    }
+
+    assert prop_specs_from_job({"prop_specs": stored}) == original
+
+
+def test_a_job_with_no_props_reads_back_as_none():
+    from pipeline.props import prop_specs_from_job
+
+    assert prop_specs_from_job({"prop_specs": None}) == {}
+    assert prop_specs_from_job({}) == {}
+
+
+def test_a_malformed_stored_entry_does_not_strand_the_resume():
+    """Refusing to start because one stored region is malformed strands the
+    whole run; the shot without its prop is still the shot."""
+    from pipeline.props import prop_specs_from_job
+
+    stored = {
+        "2": [{"placement": "hat", "region": [0.1, 0.1, 0.4, 0.4]}],
+        "3": [{"placement": "collar", "region": [0.3, 0.4, 0.7, 0.5]}],
+        "nope": [{"placement": "collar", "region": [0.3, 0.4, 0.7, 0.5]}],
+    }
+
+    assert list(prop_specs_from_job({"prop_specs": stored})) == [3]
+
+
+# --- forbidden words --------------------------------------------------------
+
+
+def test_a_human_hand_is_refused():
+    """The prompt the feature was asked for and deliberately does not
+    support: a hand touching the animal claims it tolerates being handled by
+    a stranger, which its Profile never said."""
+    from pipeline.props import forbidden_terms_in
+
+    found = forbidden_terms_in(
+        "first-person perspective, a human hand gently holding a card towards the cat"
+    )
+
+    assert "hand" in found and "human" in found and "cat" in found
+
+
+def test_another_animal_is_refused():
+    """Naming one makes the model paint one, and the toy region sits exactly
+    where a second cat would appear."""
+    from pipeline.props import forbidden_terms_in
+
+    assert "puppy" in forbidden_terms_in("a tiny plush mouse and another puppy beside it")
+
+
+def test_ordinary_prop_wording_passes():
+    from pipeline.props import forbidden_terms_in
+
+    assert forbidden_terms_in("a soft red knitted collar, warm indoor lighting") == []
+
+
+def test_matching_is_by_whole_word():
+    """ "warm" must not read as "arm", and warm lighting is in the shipped
+    defaults, so this is not hypothetical."""
+    from pipeline.props import forbidden_terms_in
+
+    assert forbidden_terms_in("warm delicate handmade fabric, therapy") == []
+
+
+def test_the_shipped_defaults_satisfy_the_rule_they_enforce():
+    """A default its own check would reject is a rule nobody can trust — and
+    the first version of the collar prompt said "pet collar", which is on the
+    list."""
+    from pipeline.props import forbidden_terms_in
+
+    assert forbidden_terms_in(config.PROPS_COLLAR_PROMPT) == []
+    assert forbidden_terms_in(config.PROPS_TOY_PROMPT) == []
+
+
+def test_the_model_itself_refuses_a_banned_prompt():
+    """Enforced on the model, not only at the API boundary: a rule that lives
+    in one endpoint is one the CLI and a resumed run walk straight past."""
+    with pytest.raises(ValueError) as excinfo:
+        SceneProp(
+            placement=PropPlacement.COLLAR,
+            region=(0.3, 0.4, 0.7, 0.5),
+            prompt="a person's hand petting the cat",
+        )
+
+    assert "hand" in str(excinfo.value)
+
+
+def test_a_script_supplied_banned_prompt_is_dropped(monkeypatch):
+    monkeypatch.setattr(config, "PROPS_ALLOW_SCRIPT", True)
+    scene = {
+        "props": [
+            {
+                "placement": "collar",
+                "region": [0.2, 0.2, 0.6, 0.4],
+                "prompt": "a human hand adjusting it",
+            }
+        ]
+    }
+
+    assert resolve_scene_props(scene) == []
+
+
+# --- how much of the video is dressed up ------------------------------------
+
+
+def _plain_scenes(count: int) -> list[dict]:
+    return [
+        {"scene_id": i, "start": (i - 1) * 5, "end": i * 5, "subtitle": "x"}
+        for i in range(1, count + 1)
+    ]
+
+
+def _collar(scene_ids) -> dict:
+    return {str(i): [{"placement": "collar", "region": [0.3, 0.4, 0.7, 0.5]}] for i in scene_ids}
+
+
+def test_no_props_is_not_a_finding():
+    from pipeline.qa import validate_script_structure
+
+    script = {"duration": 30, "scenes": _plain_scenes(6)}
+    assert validate_script_structure(script, prop_specs={}) == []
+
+
+def test_half_the_shots_dressed_is_allowed():
+    from pipeline.qa import validate_script_structure
+
+    script = {"duration": 30, "scenes": _plain_scenes(6)}
+    assert validate_script_structure(script, prop_specs=_collar([1, 2, 3])) == []
+
+
+def test_most_shots_dressed_is_reported():
+    """An adoption video exists to show an adopter this animal; every shot
+    wearing something it does not own makes it a costume shoot."""
+    from pipeline.qa import validate_script_structure
+
+    script = {"duration": 30, "scenes": _plain_scenes(6)}
+
+    issues = validate_script_structure(script, prop_specs=_collar([1, 2, 3, 4, 5]))
+
+    assert any("generated props" in issue for issue in issues)
+
+
+def test_props_the_script_asked_for_are_counted_too(monkeypatch):
+    """Counting only the reviewer's placements would let the other source
+    slip past the ratio."""
+    from pipeline.qa import validate_script_structure
+
+    monkeypatch.setattr(config, "PROPS_ALLOW_SCRIPT", True)
+    scenes = _plain_scenes(6)
+    for scene in scenes[:5]:
+        scene["props"] = [{"placement": "collar", "region": [0.3, 0.4, 0.7, 0.5]}]
+
+    issues = validate_script_structure({"duration": 30, "scenes": scenes}, prop_specs={})
+
+    assert any("generated props" in issue for issue in issues)
+
+
+def test_a_prop_on_a_scene_that_no_longer_exists_is_not_counted():
+    from pipeline.qa import validate_script_structure
+
+    script = {"duration": 30, "scenes": _plain_scenes(6)}
+    assert validate_script_structure(script, prop_specs=_collar([9, 10, 11, 12, 13])) == []

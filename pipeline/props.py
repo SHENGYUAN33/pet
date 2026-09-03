@@ -34,6 +34,7 @@ be a way around pipeline/fact_check.py rather than a feature.
 from __future__ import annotations
 
 import enum
+import re
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
@@ -98,6 +99,26 @@ class SceneProp(BaseModel):
     region: tuple[float, float, float, float]
     #: None means the placement's own default wording.
     prompt: str | None = None
+
+    @field_validator("prompt")
+    @classmethod
+    def _no_people_or_other_animals(cls, value):
+        """Enforced on the model, not only at the API boundary.
+
+        A rule that lives in one endpoint is a rule the CLI, a resumed run and
+        a script-supplied prop all walk straight past. Putting it here means
+        nothing anywhere can construct a prop that asks for a human hand on a
+        real animal — which is the whole point of the check
+        (CLAUDE.md: 規則寫在 repository 層).
+        """
+        found = forbidden_terms_in(value)
+        if found:
+            raise ValueError(
+                "prop prompt may not mention " + ", ".join(found) + " — a person touching the "
+                "animal, or a second animal beside it, claims something this pet's Profile "
+                "never said"
+            )
+        return value
 
     @field_validator("region")
     @classmethod
@@ -219,3 +240,85 @@ def apply_props(
             subject=subject,
         )
     return current
+
+
+def prop_specs_from_job(job: dict) -> dict[int, list[SceneProp]]:
+    """Read a run's prop settings back off its job row.
+
+    The round trip matters more here than for most settings: resuming has to
+    finish the video that was being made, and a shot that quietly lost its
+    collar halfway through is a different video (CLAUDE.md: 續跑必須把同一支
+    影片做完). Keys come back as strings because JSON object keys always are.
+
+    An unreadable entry is dropped rather than raised on: a resume that
+    refuses to start because one stored region is malformed strands the whole
+    run, and the shot without its prop is still the shot.
+    """
+    stored = job.get("prop_specs") or {}
+    if not isinstance(stored, dict):
+        return {}
+
+    resolved: dict[int, list[SceneProp]] = {}
+    for raw_scene_id, raw_props in stored.items():
+        try:
+            scene_id = int(raw_scene_id)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(raw_props, list):
+            continue
+        props = []
+        for item in raw_props:
+            if not isinstance(item, dict):
+                continue
+            try:
+                props.append(SceneProp.model_validate(item))
+            except ValidationError:
+                continue
+        if props:
+            resolved[scene_id] = props
+    return resolved
+
+
+def forbidden_terms_in(prompt: str | None) -> list[str]:
+    """Words in a prop description that must never reach the sampler.
+
+    Two different failures, one list (config.PROPS_FORBIDDEN_TERMS):
+
+    A person. "a hand gently holding the cat" puts a stranger in physical
+    contact with a real adoptable animal — a claim its Profile never made,
+    and the prop mask makes it *more* convincing rather than less. This is
+    the same rule pipeline/fact_check.py enforces on generated backgrounds,
+    and a prop prompt is the one place it could otherwise be walked around.
+
+    Another animal. Naming one makes the model paint one, and the toy region
+    sits beside the pet — precisely where a second cat would appear.
+
+    Whole-word matching, so "cat" does not fire on "delicate" and "arm" does
+    not fire on "warm"; warm lighting is in the shipped defaults, so that one
+    is not hypothetical. Returns the offending words, sorted, so a caller can
+    say which ones rather than only that something was wrong.
+    """
+    if not prompt:
+        return []
+    return sorted(
+        {
+            term
+            for term in config.PROPS_FORBIDDEN_TERMS
+            if re.search(rf"\b{re.escape(term)}\b", prompt, re.IGNORECASE)
+        }
+    )
+
+
+def prop_specs_to_job(prop_specs: dict[int, list[SceneProp]] | None) -> dict:
+    """The job-row form of a run's props: the inverse of prop_specs_from_job.
+
+    Its own function rather than a dict comprehension at each call site,
+    because there are three of them (the job row, QA's count, and a
+    revision's inherited set) and they must not be able to disagree about
+    what this run is painting. Keys are strings because JSON object keys
+    always are.
+    """
+    return {
+        str(scene_id): [prop.model_dump(mode="json") for prop in props]
+        for scene_id, props in (prop_specs or {}).items()
+    }

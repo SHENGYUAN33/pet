@@ -21,6 +21,7 @@ from pipeline.pet_repo import (
 )
 from pipeline.profile import PetProfile
 from pipeline.progress import ProgressCallback, noop, scaled
+from pipeline.props import SceneProp, prop_specs_from_job, prop_specs_to_job
 from pipeline.qa import validate_script_structure
 from pipeline.rendering import render_script
 from pipeline.scene_tracking import DatabaseSceneTracker
@@ -79,6 +80,7 @@ def regenerate_scene(
     background_mode: BackgroundMode = BackgroundMode.EXTEND,
     image_provider: str = "comfy",
     background_prompt: str | None = None,
+    props: list[SceneProp] | None = None,
     accent_colour: str | None = None,
     border_width: int | None = None,
     on_progress: ProgressCallback = noop,
@@ -106,6 +108,17 @@ def regenerate_scene(
     if profile is None:
         raise ValueError(f"No pet found with id {job['pet_id']!r}")
 
+    # Props the run already carried, kept. Unlike the overlay they do not
+    # live in the script — they are a reviewer's decision about one
+    # photograph, recorded on the job row — so a revision that only carried
+    # the newly placed one silently stripped the collar somebody added two
+    # revisions ago. A revision changes one shot; it does not undress the
+    # others.
+    inherited = prop_specs_from_job(job)
+    if props:
+        inherited[scene_id] = list(props)
+    resolved_props = inherited
+
     script = apply_scene_overrides(
         job["script_json"],
         scene_id,
@@ -132,6 +145,10 @@ def regenerate_scene(
         background_mode=background_mode.value,
         image_provider=image_provider,
         background_prompt=background_prompt,
+        # Only the patched scene can carry props: a revision paints what the
+        # reviewer just placed on the shot they are looking at, and a region
+        # is a place on that one photograph.
+        prop_specs=prop_specs_to_job(resolved_props),
         decor_accent=accent_colour,
         decor_border_width=border_width,
     )
@@ -150,6 +167,7 @@ def regenerate_scene(
             background_mode=background_mode,
             image_provider=image_provider,
             background_prompt=background_prompt,
+            props=resolved_props,
             accent_colour=accent_colour,
             border_width=border_width,
             on_progress=on_progress,
@@ -176,6 +194,7 @@ def _render_revision(
     background_mode: BackgroundMode,
     image_provider: str,
     background_prompt: str | None,
+    props: dict[int, list[SceneProp]],
     accent_colour: str | None,
     border_width: int | None,
     on_progress: ProgressCallback,
@@ -189,7 +208,7 @@ def _render_revision(
     missing = find_missing_disclosures(script, profile, llm)
     background_risks = find_background_risks(script)
     unsupported = find_unsupported_claims(script, profile, llm)
-    structure_issues = validate_script_structure(script)
+    structure_issues = validate_script_structure(script, prop_specs=prop_specs_to_job(props))
     script["_disclosure_check"] = {
         "missing_restrictions": missing,
         "background_risks": background_risks,
@@ -229,6 +248,7 @@ def _render_revision(
         background_mode=background_mode,
         image_provider=image_provider,
         background_prompt=background_prompt,
+        prop_specs=props or None,
         accent_colour=accent_colour,
         border_width=border_width,
         on_progress=scaled(on_progress, 0.05, 0.98),

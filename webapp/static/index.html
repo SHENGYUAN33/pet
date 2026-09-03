@@ -893,6 +893,34 @@ textarea.auto { min-height: 76px; resize: vertical; font-family: inherit; }
               </div>
             </details>
 
+            <details class="adv" id="prop-block">
+              <summary>加入裝飾道具（選填）</summary>
+              <div class="adv-body">
+                <p class="hint" style="margin-top:0">在寵物身上畫一個項圈，或在牠旁邊放一個小玩偶。<strong>這是唯一會改到動物本身的處理</strong>，所以做出來的鏡頭一定會標示「含 AI 道具裝飾」。只對照片鏡頭有效，需要先開著 ComfyUI。</p>
+                <label class="field">
+                  <span class="lbl">道具種類<span class="sub">選了就會啟用；留白＝不加道具</span></span>
+                  <select name="prop_placement" id="prop-placement">
+                    <option value="">不加道具</option>
+                    <option value="collar">項圈（畫在寵物身上）</option>
+                    <option value="toy">身旁玩偶（放在寵物旁邊）</option>
+                  </select>
+                </label>
+                <div id="prop-picker" hidden>
+                  <span class="lbl">在照片上點一下要畫的位置<span class="sub">項圈點脖子、玩偶點旁邊的地面。系統會以這個點為中心決定範圍</span></span>
+                  <div id="prop-canvas-wrap" style="position:relative;display:inline-block;max-width:100%;margin-top:6px">
+                    <img id="prop-photo" alt="" style="max-width:100%;display:block;border-radius:8px;cursor:crosshair" />
+                    <div id="prop-marker" hidden style="position:absolute;border:2px solid #fff;box-shadow:0 0 0 2px rgba(0,0,0,.55);border-radius:6px;pointer-events:none"></div>
+                  </div>
+                  <p class="hint" id="prop-point-hint" style="margin-top:6px">尚未選位置。</p>
+                </div>
+                <p class="hint" id="prop-unavailable" hidden style="margin-top:6px"></p>
+                <label class="field">
+                  <span class="lbl">道具描述 prompt<span class="sub"><strong>必須是英文</strong>（圖像模型只認英文）。留白＝用該種類的預設描述。<strong>不要提到動物或人</strong></span></span>
+                  <input type="text" name="prop_prompt" placeholder="a cute pink knitted collar around the neck, soft fabric texture" />
+                </label>
+              </div>
+            </details>
+
             <details class="adv" id="overlay-block">
               <summary>版型（選填）</summary>
               <div class="adv-body">
@@ -959,6 +987,7 @@ const STYLE_LABEL = { cute: "萌系", warm_story: "溫暖故事", contrast_humor
 const BACKGROUND_LABEL = { extend: "🖼 延伸背景", replace: "🎨 置換背景（AI）" };
 // "none" is deliberately absent: a badge on every row is no badge at all,
 // same rule as the background labels above.
+const PROP_LABEL = { collar: "項圈", toy: "身旁玩偶" };
 const OVERLAY_LABEL = {
   center_quote: "置中大字",
   speech_bubble: "對話氣泡",
@@ -1616,10 +1645,15 @@ async function loadScenes(jobId) {
       // rows, not in the script — merge it in so a reviewer picking a shot to
       // redo can see which ones were flagged (pipeline/identity.py).
       const identity = {};
+      const sceneProps = {};
       for (const row of job.scene_jobs || []) {
         if (row.identity_check) identity[row.scene_id] = row.identity_check;
+        if (row.props) sceneProps[row.scene_id] = row.props;
       }
-      for (const scene of scenes) scene._identity = identity[scene.scene_id] || null;
+      for (const scene of scenes) {
+        scene._identity = identity[scene.scene_id] || null;
+        scene._props = sceneProps[scene.scene_id] || null;
+      }
       sceneCache[jobId] = scenes;
     } catch (err) {
       host.innerHTML = "";
@@ -1653,6 +1687,10 @@ async function loadScenes(jobId) {
     // to replace without opening the script JSON.
     const panel = OVERLAY_LABEL[(scene.overlay || {}).template];
     meta.push(panel ? "▦ " + panel : null);
+    // A prop is the one edit that alters the animal, so which shots carry one
+    // is the first thing a reviewer scanning this list needs to see.
+    const props = scene._props || [];
+    if (props.length) meta.push("🎀 " + props.map((p) => PROP_LABEL[p.placement] || p.placement).join("、"));
     div.querySelector(".m").textContent = meta.filter(Boolean).join(" · ");
 
     const identity = scene._identity;
@@ -1700,6 +1738,14 @@ function selectScene(scene, el) {
     ? "沿用腳本的決定（目前是 " + (OVERLAY_LABEL[overlay.template] || overlay.template) + "）"
     : "沿用腳本的決定（目前沒有版面）";
   syncOverlayFields();
+
+  // The prop control is the shot's own photograph, so it has to be reloaded
+  // whenever the selected shot changes — and any point picked on the previous
+  // one means nothing on this one.
+  $("prop-placement").value = "";
+  form.querySelector('input[name="prop_prompt"]').value = "";
+  loadPropSource(form.querySelector('input[name="job_id"]').value, scene.scene_id);
+
   $("regen-fields").hidden = false;
 }
 
@@ -1711,6 +1757,94 @@ function openRegenFor(jobId) {
     loadScenes(String(jobId));
   }
 }
+
+/* ---------- prop controls ----------
+   Placing a prop means naming a point on one particular photograph, so the
+   control is the photograph: click where the collar goes. The box around
+   that point is decided server-side (its shape differs per placement), which
+   is why this asks for a click rather than a drag — a reviewer should not
+   have to drag a rectangle accurately to say "here". */
+const PROP_SIZES = { collar: [0.42, 0.13], toy: [0.26, 0.20] };
+let propPoint = null;
+let propSourceOk = false;
+
+function clearPropPoint() {
+  propPoint = null;
+  $("prop-marker").hidden = true;
+  $("prop-point-hint").textContent = "尚未選位置。";
+}
+
+function drawPropMarker() {
+  const img = $("prop-photo");
+  const marker = $("prop-marker");
+  const placement = $("prop-placement").value;
+  if (!propPoint || !placement || !img.clientWidth) { marker.hidden = true; return; }
+  // The same rectangle the server will paint into, drawn to scale — so what
+  // the reviewer sees selected is what actually gets repainted.
+  const [w, h] = PROP_SIZES[placement] || PROP_SIZES.collar;
+  marker.style.left = ((propPoint[0] - w / 2) * img.clientWidth) + "px";
+  marker.style.top = ((propPoint[1] - h / 2) * img.clientHeight) + "px";
+  marker.style.width = (w * img.clientWidth) + "px";
+  marker.style.height = (h * img.clientHeight) + "px";
+  marker.hidden = false;
+}
+
+async function loadPropSource(jobId, sceneId) {
+  const picker = $("prop-picker");
+  const unavailable = $("prop-unavailable");
+  propSourceOk = false;
+  picker.hidden = true;
+  unavailable.hidden = true;
+  clearPropPoint();
+  try {
+    const info = await api("/api/jobs/" + jobId + "/scenes/" + sceneId + "/source");
+    if (!info.photo) {
+      unavailable.textContent = info.reason || "這個鏡頭不能加道具。";
+      unavailable.hidden = false;
+      return;
+    }
+    $("prop-photo").src = info.url;
+    propSourceOk = true;
+    syncPropFields();
+  } catch (err) {
+    unavailable.textContent = "讀不到這個鏡頭的素材：" + err.message;
+    unavailable.hidden = false;
+  }
+}
+
+function syncPropFields() {
+  const chosen = Boolean($("prop-placement").value);
+  $("prop-picker").hidden = !(chosen && propSourceOk);
+  if (!chosen) clearPropPoint();
+  else drawPropMarker();
+}
+
+function propsFrom(form) {
+  const placement = form.get("prop_placement");
+  // Blank is the normal state: the shot keeps the picture it has.
+  if (!placement) return { prop_placement: null, prop_point: null, prop_prompt: null };
+  return {
+    prop_placement: placement,
+    prop_point: propPoint,
+    prop_prompt: form.get("prop_prompt") || null,
+  };
+}
+
+$("prop-placement").addEventListener("change", syncPropFields);
+$("prop-photo").addEventListener("click", (e) => {
+  const rect = e.currentTarget.getBoundingClientRect();
+  propPoint = [
+    Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)),
+    Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height)),
+  ];
+  $("prop-point-hint").textContent =
+    "位置：" + Math.round(propPoint[0] * 100) + "% , " + Math.round(propPoint[1] * 100) + "%";
+  drawPropMarker();
+});
+// The marker is positioned against the rendered size, which changes when the
+// image finishes loading or the window is resized.
+$("prop-photo").addEventListener("load", drawPropMarker);
+window.addEventListener("resize", drawPropMarker);
 
 /* ---------- overlay controls ----------
    Only the fields the chosen template renders are shown. Every template's
@@ -1980,7 +2114,13 @@ $("regenerate-form").addEventListener("submit", async (e) => {
     background_prompt: form.get("background_prompt") || null,
     ...decorFrom(form),
     ...overlayFrom(form),
+    ...propsFrom(form),
   };
+  // The server refuses this too; asking here saves a wasted render.
+  if (body.prop_placement && !body.prop_point) {
+    toast("選了道具但沒有指定位置 — 請在預覽圖上點一下", "err");
+    return;
+  }
   // The server refuses these too — this is only so the reviewer hears it
   // before waiting for a render rather than after.
   const needed = OVERLAY_REQUIRED[(body.overlay || {}).template];
