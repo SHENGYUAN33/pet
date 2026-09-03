@@ -778,3 +778,22 @@ PROPS_FORBIDDEN_TERMS = tuple(
 # would be taking home. Half is generous; the point is that the plain shots
 # have to outnumber the dressed ones.
 PROPS_MAX_SCENE_RATIO = float(os.getenv("PROPS_MAX_SCENE_RATIO", "0.5"))
+
+# --- 版面避開寵物 / Layout that keeps clear of the animal ----------------------
+# Overlay panels and stickers used to sit at fixed positions, which works
+# until the animal is where the panel is — and in shelter photos it often is.
+# With this on, each element is placed at whichever of its candidate positions
+# has least of the pet under it (pipeline/layout.py), using the same
+# segmentation the background and prop treatments already do.
+#
+# Off is a real setting, not just a kill switch: it needs a segmenter running,
+# and a machine without one should produce the old fixed layout rather than
+# fail. That is also what happens automatically when the mask cannot be
+# produced, so this only decides whether to try.
+LAYOUT_AVOID_SUBJECT = os.getenv("LAYOUT_AVOID_SUBJECT", "1").lower() not in {"0", "false", "no"}
+# How much better a different position has to score before an element is
+# actually moved. A placement 2% clearer but in the opposite corner is not
+# better, it is just different — and a sidebar that jumps corner to corner
+# between shots reads as a bug. Within this margin the design's own first
+# choice wins.
+LAYOUT_MOVE_THRESHOLD = float(os.getenv("LAYOUT_MOVE_THRESHOLD", "0.08"))

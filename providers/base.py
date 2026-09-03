@@ -151,6 +151,32 @@ class ImageEditingProvider(ABC):
         implementations that don't need it ignore it.
         """
 
+    def subject_mask(
+        self,
+        image_path: str,
+        *,
+        output_path: str,
+        subject: str | None = None,
+    ) -> str:
+        """Write a black-and-white mask of the subject of image_path to
+        output_path (returned), white where the animal is.
+
+        Concrete rather than abstract for the same reason add_prop below is:
+        this interface already has implementations and a new required method
+        would break them.
+
+        Segmentation was already happening inside replace_background and
+        add_prop, but only as a step buried in their graphs. This exposes it
+        on its own because something else needs the answer: where the animal
+        is decides where a caption can go without covering it
+        (pipeline/layout.py). That caller generates no pixels at all — it only
+        wants to know what is where.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} cannot segment an image — "
+            "use a provider that implements subject_mask()"
+        )
+
     def add_prop(
         self,
         image_path: str,

@@ -25,6 +25,7 @@ import math
 from pathlib import Path
 
 from pipeline import config
+from pipeline.layout import Occupancy, pick_slots
 
 
 #: Where a shot may carry a mark without covering something that has to be
@@ -132,14 +133,27 @@ def sticker_path(shape: str, accent: str, size: int | None = None) -> Path:
 
 
 def stickers_for_scene(
-    style: str, accent: str, scene_index: int, frame_width: int, frame_height: int
+    style: str,
+    accent: str,
+    scene_index: int,
+    frame_width: int,
+    frame_height: int,
+    occupancy: Occupancy | None = None,
 ) -> list[tuple[Path, int, int]]:
     """The marks this shot carries, and where they sit.
 
-    Which corner they land in moves with the shot, so a six-shot video does
-    not have the same mark stuck in the same place six times. Returns an
-    empty list when stickers are off or the style asks for none — a style
-    that wants a plain frame is a real answer.
+    Corners are chosen by what is under them: the emptiest first, each one
+    taken out of the running as it is picked so two marks cannot land on the
+    same clear corner. A mark over the animal's face is the most obviously
+    wrong thing this layer can do, and it used to happen whenever the
+    rotation landed there.
+
+    Without an occupancy the corners rotate with the shot, as before, so a
+    six-shot video still does not have the same mark stuck in one place six
+    times — that is the fallback when nothing knows where the pet is.
+
+    Returns an empty list when stickers are off or the style asks for none —
+    a style that wants a plain frame is a real answer.
     """
     if not config.DECOR_STICKERS_ENABLED:
         return []
@@ -150,8 +164,20 @@ def stickers_for_scene(
 
     size = config.DECOR_STICKER_SIZE
     slots = placement_slots(frame_width, frame_height, size)
-    placed = []
-    for offset, shape in enumerate(shapes):
-        x, y = slots[(scene_index + offset) % len(slots)]
-        placed.append((sticker_path(shape, accent, size), x, y))
-    return placed
+
+    if occupancy is None:
+        positions = [slots[(scene_index + offset) % len(slots)] for offset in range(len(shapes))]
+    else:
+        boxes = [
+            (x / frame_width, y / frame_height, (x + size) / frame_width, (y + size) / frame_height)
+            for x, y in slots
+        ]
+        positions = [
+            (int(box[0] * frame_width), int(box[1] * frame_height))
+            for box in pick_slots(boxes, occupancy, len(shapes))
+        ]
+
+    return [
+        (sticker_path(shape, accent, size), x, y)
+        for shape, (x, y) in zip(shapes, positions, strict=False)
+    ]

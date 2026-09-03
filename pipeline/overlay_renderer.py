@@ -38,6 +38,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from pipeline import config
 from pipeline.editing import text_tokens
+from pipeline.layout import Anchor, Occupancy, anchor_box, choose_anchor
 
 
 class OverlayTemplate(str, enum.Enum):
@@ -442,7 +443,11 @@ def _shadow_reach() -> tuple[int, int]:
     layer paints, so a panel placed flush against the subtitle would put its
     shadow on top of the subtitle.
     """
-    blur = config.OVERLAY_SHADOW_BLUR * 2
+    # Three times the radius, not two: that is where a Gaussian's support
+    # actually ends, and the two-times estimate let a top-anchored bubble's
+    # shadow reach 4px past the band — measured, once placement started
+    # putting panels flush against the band's edge instead of well inside it.
+    blur = config.OVERLAY_SHADOW_BLUR * 3
     return blur - config.OVERLAY_SHADOW_OFFSET_Y, blur + config.OVERLAY_SHADOW_OFFSET_Y
 
 
@@ -461,7 +466,89 @@ def _band(height: int) -> tuple[int, int]:
     )
 
 
-def _render_info_sidebar(draw, spec, width, height, accent, text_colour) -> None:
+#: Where each template is willing to sit, in the order the design prefers.
+#:
+#: Order matters as much as membership: the first entry is what a shot with
+#: nothing in the way gets, which is the layout these templates had before any
+#: of this existed. The rest are only reached when the animal is genuinely
+#: under the first choice.
+#:
+#: A contact card offers only bottom positions and a held quote only vertical
+#: ones, because those are design decisions rather than free variables — a
+#: closing call-to-action pinned to the top corner would be a different, worse
+#: design, not a rescued one.
+CANDIDATES: dict[OverlayTemplate, list[Anchor]] = {
+    OverlayTemplate.INFO_SIDEBAR: [
+        Anchor.TOP_RIGHT,
+        Anchor.TOP_LEFT,
+        Anchor.BOTTOM_RIGHT,
+        Anchor.BOTTOM_LEFT,
+    ],
+    OverlayTemplate.SPEECH_BUBBLE: [
+        Anchor.TOP_RIGHT,
+        Anchor.TOP_LEFT,
+        Anchor.BOTTOM_RIGHT,
+        Anchor.BOTTOM_LEFT,
+    ],
+    # Centre first, and by a long way — this is the shot's message, not an
+    # annotation on it. The corners are there because the reference designs
+    # this follows put the hero line in the photograph's empty corner rather
+    # than across the animal, and on a photo with room to one side that is
+    # plainly better. The name is now slightly narrower than the behaviour:
+    # it is a held quote that prefers the centre, not one pinned to it.
+    OverlayTemplate.CENTER_QUOTE: [
+        Anchor.CENTRE,
+        Anchor.TOP_CENTRE,
+        Anchor.BOTTOM_CENTRE,
+        Anchor.TOP_LEFT,
+        Anchor.TOP_RIGHT,
+        Anchor.BOTTOM_LEFT,
+        Anchor.BOTTOM_RIGHT,
+    ],
+    OverlayTemplate.CONTACT_CARD: [
+        Anchor.BOTTOM_CENTRE,
+        Anchor.BOTTOM_LEFT,
+        Anchor.BOTTOM_RIGHT,
+    ],
+}
+
+
+def place(
+    template: OverlayTemplate,
+    panel_size: tuple[int, int],
+    frame: tuple[int, int],
+    band: tuple[int, int],
+    occupancy: Occupancy,
+    *,
+    margin: int | None = None,
+) -> tuple[int, int]:
+    """Top-left pixel for a panel of this size, clear of the animal.
+
+    The one place a template's position is decided, so "keep off the pet"
+    could not be implemented in three of the four and forgotten in the
+    fourth. Everything crosses into fractions here because that is what the
+    layout engine reasons in, and back into pixels because that is what
+    Pillow draws in.
+    """
+    width, height = frame
+    band_top, band_bottom = band
+    margin = config.OVERLAY_MARGIN if margin is None else margin
+
+    size = (panel_size[0] / width, panel_size[1] / height)
+    band_fractions = (band_top / height, band_bottom / height)
+    anchor = choose_anchor(
+        CANDIDATES[template],
+        size,
+        occupancy,
+        band=band_fractions,
+        margin=margin / width,
+        tolerance=config.LAYOUT_MOVE_THRESHOLD,
+    )
+    left, top, _, _ = anchor_box(anchor, size, band_fractions, margin / width)
+    return int(left * width), int(top * height)
+
+
+def _render_info_sidebar(draw, spec, width, height, accent, text_colour, occupancy) -> None:
     """A column of short facts down the right-hand side, each with a mark.
 
     Right rather than left, and only as wide as OVERLAY_SIDEBAR_RATIO: the
@@ -488,11 +575,15 @@ def _render_info_sidebar(draw, spec, width, height, accent, text_colour) -> None
         for index, line in enumerate(wrap_to_width(draw, tag, font, inner_width)):
             rows.append((shape if index == 0 else None, line))
 
-    band_top, _ = _band(height)
-    x0 = width - panel_width - config.OVERLAY_MARGIN
-    y0 = band_top
     step = _line_height(font)
     panel_height = padding * 2 + step * len(rows)
+    x0, y0 = place(
+        OverlayTemplate.INFO_SIDEBAR,
+        (panel_width, panel_height),
+        (width, height),
+        _band(height),
+        occupancy,
+    )
 
     _plate(draw, (x0, y0, x0 + panel_width, y0 + panel_height), accent)
 
@@ -505,7 +596,7 @@ def _render_info_sidebar(draw, spec, width, height, accent, text_colour) -> None
         y += step
 
 
-def _render_speech_bubble(draw, spec, width, height, accent, text_colour) -> None:
+def _render_speech_bubble(draw, spec, width, height, accent, text_colour, occupancy) -> None:
     """Something the pet is saying, with a tail so it reads as speech.
 
     The tail is the whole difference between a bubble and a caption box, and
@@ -518,20 +609,27 @@ def _render_speech_bubble(draw, spec, width, height, accent, text_colour) -> Non
     """
     font = _font(config.OVERLAY_QUOTE_SIZE, ROUND)
     padding = config.OVERLAY_PANEL_PADDING
-    band_top, band_bottom = _band(height)
-
     max_inner = int(width * 0.62) - padding * 2
     lines = wrap_to_width(draw, _clip(spec.quote), font, max_inner)
     inner_width = max(_text_width(draw, line, font) for line in lines)
     panel_width = inner_width + padding * 2
     panel_height = padding * 2 + _line_height(font) * len(lines)
 
-    # Upper part of the band, so the tail has picture to point down into
-    # rather than pointing at the subtitle. The extra inset leaves room for
-    # the corners the tilt swings outward.
+    # Room for the corners the tilt swings outward, and for the tail hanging
+    # below — both are part of what this element occupies, so the placer has
+    # to be told about them or a bottom-anchored bubble puts its tail on the
+    # subtitle.
     tilt_room = int(panel_width * math.sin(math.radians(abs(config.OVERLAY_BUBBLE_TILT))) / 2) + 4
-    x0 = width - panel_width - config.OVERLAY_MARGIN - tilt_room
-    y0 = band_top + tilt_room + int((band_bottom - band_top) * 0.12)
+    tail_room = config.OVERLAY_BUBBLE_TAIL_HEIGHT
+    x0, y0 = place(
+        OverlayTemplate.SPEECH_BUBBLE,
+        (panel_width + tilt_room * 2, panel_height + tilt_room + tail_room),
+        (width, height),
+        _band(height),
+        occupancy,
+    )
+    x0 += tilt_room
+    y0 += tilt_room
 
     _plate(draw, (x0, y0, x0 + panel_width, y0 + panel_height), accent)
 
@@ -551,7 +649,7 @@ def _render_speech_bubble(draw, spec, width, height, accent, text_colour) -> Non
     _draw_lines(draw, lines, x0 + padding, y0 + padding, font, text_colour)
 
 
-def _render_center_quote(draw, spec, width, height, accent, text_colour) -> None:
+def _render_center_quote(draw, spec, width, height, accent, text_colour, occupancy) -> None:
     """One line held large across the middle: the opening hook.
 
     Set in the handwritten face — this is the animal talking, and a typeset
@@ -561,16 +659,19 @@ def _render_center_quote(draw, spec, width, height, accent, text_colour) -> None
     """
     font = _font(config.OVERLAY_HEADLINE_SIZE, HANDWRITTEN)
     padding = config.OVERLAY_PANEL_PADDING
-    band_top, band_bottom = _band(height)
-
     max_inner = width - config.OVERLAY_MARGIN * 2 - padding * 2
     lines = wrap_to_width(draw, _clip(spec.headline), font, max_inner)
     inner_width = max(_text_width(draw, line, font) for line in lines)
     panel_width = inner_width + padding * 2
     panel_height = padding * 2 + _line_height(font) * len(lines)
 
-    x0 = (width - panel_width) // 2
-    y0 = band_top + (band_bottom - band_top - panel_height) // 2
+    x0, y0 = place(
+        OverlayTemplate.CENTER_QUOTE,
+        (panel_width, panel_height),
+        (width, height),
+        _band(height),
+        occupancy,
+    )
 
     _plate(draw, (x0, y0, x0 + panel_width, y0 + panel_height), accent)
     step = _line_height(font)
@@ -581,7 +682,7 @@ def _render_center_quote(draw, spec, width, height, accent, text_colour) -> None
         y += step
 
 
-def _render_contact_card(draw, spec, width, height, accent, text_colour) -> None:
+def _render_contact_card(draw, spec, width, height, accent, text_colour, occupancy) -> None:
     """The closing ask, and who to ask.
 
     Sits at the bottom of the band, just above where the subtitle starts: this
@@ -591,7 +692,6 @@ def _render_contact_card(draw, spec, width, height, accent, text_colour) -> None
     cta_font = _font(config.OVERLAY_QUOTE_SIZE, ROUND)
     contact_font = _font(config.OVERLAY_BODY_SIZE, ROUND)
     padding = config.OVERLAY_PANEL_PADDING
-    _, band_bottom = _band(height)
 
     max_inner = width - config.OVERLAY_MARGIN * 2 - padding * 2
     cta_lines = wrap_to_width(draw, _clip(spec.cta_text), cta_font, max_inner)
@@ -612,14 +712,19 @@ def _render_contact_card(draw, spec, width, height, accent, text_colour) -> None
         + _line_height(contact_font) * len(contact_lines)
     )
 
-    x0 = (width - panel_width) // 2
-    # Lifted clear of the band's floor rather than sitting on it. The band's
-    # bottom edge was set for stickers, which are small and sparse; a plate
-    # flush against it reads as one block with the subtitle beneath, and a
-    # subtitle that wraps to a third line grows upward into it (the subtitle
-    # is anchored by the bottom of its text block, see editing.py). Measured
-    # on a real shot with a two-line subtitle: the two were touching.
-    y0 = band_bottom - config.OVERLAY_SUBTITLE_CLEARANCE - panel_height
+    # The band's floor is pulled up by the subtitle clearance before placing:
+    # a plate flush against it reads as one block with the subtitle beneath,
+    # and a subtitle that wraps to a third line grows upward into it (the
+    # subtitle is anchored by the bottom of its text block, see editing.py).
+    # Measured on a real shot with a two-line subtitle: the two were touching.
+    band_top, band_bottom = _band(height)
+    x0, y0 = place(
+        OverlayTemplate.CONTACT_CARD,
+        (panel_width, panel_height),
+        (width, height),
+        (band_top, band_bottom - config.OVERLAY_SUBTITLE_CLEARANCE),
+        occupancy,
+    )
 
     _plate(draw, (x0, y0, x0 + panel_width, y0 + panel_height), accent)
     y = _draw_lines(draw, cta_lines, x0 + padding, y0 + padding, cta_font, _rgba(accent))
@@ -699,6 +804,7 @@ def render_scene_overlay(
     accent: str,
     output_path: Path | str,
     scene_index: int = 0,
+    occupancy: Occupancy | None = None,
 ) -> Path | None:
     """Draw one shot's composed layer as a transparent PNG, or None.
 
@@ -721,7 +827,15 @@ def render_scene_overlay(
         return None
 
     layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    renderer(ImageDraw.Draw(layer), spec, width, height, accent, _rgba(config.OVERLAY_TEXT_COLOUR))
+    renderer(
+        ImageDraw.Draw(layer),
+        spec,
+        width,
+        height,
+        accent,
+        _rgba(config.OVERLAY_TEXT_COLOUR),
+        occupancy or Occupancy.empty(),
+    )
     canvas = _with_shadow(layer, tilt_for(spec.template, scene_index))
 
     output_path = Path(output_path)

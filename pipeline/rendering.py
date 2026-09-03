@@ -23,6 +23,7 @@ from pipeline.editing import (
 )
 from pipeline.i2v import animate_photo, get_video_provider
 from pipeline.identity import check_identity, get_vlm_provider
+from pipeline.layout import Occupancy, painted_box
 from pipeline.montage import scene_sources
 from pipeline.narration import silence_scenes, synthesize_scenes
 from pipeline.overlay_renderer import render_scene_overlay, resolve_scene_overlay
@@ -30,6 +31,7 @@ from pipeline.profile import PetProfile
 from pipeline.progress import ProgressCallback, noop
 from pipeline.props import SceneProp, apply_props, resolve_scene_props
 from pipeline.scene_tracking import NoopSceneTracker, SceneTracker
+from pipeline.subject_mask import occupancy_for
 from providers.tts.xtts_provider import XTTSProvider
 
 
@@ -320,7 +322,27 @@ def render_script(
     first_scene_id = script["scenes"][0]["scene_id"] if script["scenes"] else None
     info_card_text = decoration.identity_line(profile) if config.DECOR_ENABLED else None
 
-    def overlay_for(scene: dict, scene_id: int, scene_index: int) -> Path | None:
+    def occupancy_of(visual_path: Path) -> Occupancy:
+        """Where the pet is in this shot's picture.
+
+        Measured on the picture that is about to be rendered, so a shot whose
+        background was extended or whose prop was just painted is placed
+        against what it actually looks like now, not against the original.
+
+        Never fails: a stopped segmenter gives an empty grid, which places
+        every element exactly where the design would have put it anyway.
+        """
+        if not config.LAYOUT_AVOID_SUBJECT:
+            return Occupancy.empty()
+        try:
+            provider = load_background_provider()
+        except Exception:  # noqa: BLE001 - boundary: optional, and only decides a position
+            return Occupancy.empty()
+        return occupancy_for(visual_path, provider, subject=profile.species)
+
+    def overlay_for(
+        scene: dict, scene_id: int, scene_index: int, occupancy: Occupancy
+    ) -> Path | None:
         """This shot's composed panel, drawn into the job's work_dir.
 
         Redrawn rather than cached across runs: it costs milliseconds, and a
@@ -343,6 +365,7 @@ def render_script(
             height=FRAME_HEIGHT,
             accent=resolved_accent,
             output_path=work_dir / f"scene_{scene_id}_overlay.png",
+            occupancy=occupancy,
             # Only decides which way a tilted panel leans, so consecutive
             # bubbles do not lean identically. Derived from the shot rather
             # than drawn at random: a resumed run has to reproduce the shot
@@ -490,6 +513,20 @@ def render_script(
                 if background is not None or animated or props:
                     verify_identity(scene_id, str(visual_path))
 
+                # One grid per shot, shared: the panel is placed first and
+                # then marked taken, so a mark cannot land on it.
+                occupancy = occupancy_of(visual_path)
+                overlay_path = overlay_for(scene, scene_id, index, occupancy)
+                sticker_occupancy = occupancy
+                if overlay_path is not None:
+                    # Asked of the finished PNG rather than tracked separately:
+                    # the panel chooses its own position from several
+                    # candidates, so its alpha is the only thing that actually
+                    # knows where it ended up.
+                    panel_box = painted_box(overlay_path)
+                    if panel_box is not None:
+                        sticker_occupancy = occupancy.with_box(panel_box)
+
                 build_scene_clip(
                     visual_path=str(visual_path),
                     duration=duration,
@@ -505,10 +542,11 @@ def render_script(
                         index,
                         FRAME_WIDTH,
                         FRAME_HEIGHT,
+                        sticker_occupancy,
                     )
                     if resolved_accent
                     else None,
-                    overlay_path=overlay_for(scene, scene_id, index),
+                    overlay_path=overlay_path,
                 )
         except Exception as e:
             # Boundary: FFmpeg and the I2V providers are external. Record

@@ -789,6 +789,36 @@ class ComfyBackgroundProvider(ImageEditingProvider):
             },
         }
 
+    def subject_mask(
+        self,
+        image_path: str,
+        *,
+        output_path: str,
+        subject: str | None = None,
+    ) -> str:
+        """Just the silhouette: no sampler, no checkpoint, no generation.
+
+        Reuses the prop graph's matte nodes, which already produce a mask in
+        register with the photograph at its own size. Measured on this
+        machine: about 4 seconds cold and 2 warm, which is what makes it
+        affordable to ask for every photo shot rather than only the ones being
+        repainted.
+        """
+        uploaded = self.client.upload_image(image_path)
+        graph = self._prop_matte_nodes(subject or config.BACKGROUND_SUBJECT_FALLBACK)
+        graph[P_LOAD] = {"class_type": "LoadImage", "inputs": {"image": uploaded}}
+        graph[P_SUBJECT_MASK] = {
+            "class_type": "ThresholdMask",
+            "inputs": {"mask": [P_MATTE, 0], "value": config.BACKGROUND_MATTE_THRESHOLD},
+        }
+        graph[P_MASK_IMAGE] = {"class_type": "MaskToImage", "inputs": {"mask": [P_SUBJECT_MASK, 0]}}
+        graph[P_SAVE_MASK] = {
+            "class_type": "SaveImage",
+            "inputs": {"images": [P_MASK_IMAGE, 0], "filename_prefix": Path(output_path).stem},
+        }
+        entry = self.client.run(graph)
+        return self.client.fetch_output(entry["outputs"][P_SAVE_MASK]["images"][0], output_path)
+
     def preflight_props(self) -> None:
         """Raise if a prop run clearly cannot start.
 
